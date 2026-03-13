@@ -34,7 +34,7 @@ use git::{
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
         GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
         UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
@@ -3938,8 +3938,7 @@ impl Repository {
             active_jobs: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            graph_commit_data_handler: GraphCommitHandlerState::Closed,
-        }
+            graph_commit_data_handler: GraphCommitHandlerState::Closed,        }
     }
 
     fn remote(
@@ -4550,6 +4549,32 @@ impl Repository {
         log_order: LogOrder,
     ) -> Option<&InitialGitGraphData> {
         self.initial_graph_data.get(&(log_source, log_order))
+    }
+
+    pub fn search_commits(
+        &mut self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: smol::channel::Sender<Vec<Oid>>,
+        cx: &mut Context<Self>,
+    ) {
+        let repository_state = self.repository_state.clone();
+
+        cx.background_spawn(async move {
+            let repo_state = repository_state.await;
+
+            match repo_state {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    backend
+                        .search_commits(log_source, search_args, request_tx)
+                        .await
+                        .log_err();
+                }
+                Ok(RepositoryState::Remote(_)) => {}
+                Err(_) => {}
+            };
+        })
+        .detach();
     }
 
     pub fn graph_data(

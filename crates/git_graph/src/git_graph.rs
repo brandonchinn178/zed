@@ -1,10 +1,13 @@
 use collections::{BTreeMap, HashMap};
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath},
+    repository::{
+        CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
+        SearchCommitArgs,
+    },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
@@ -201,6 +204,8 @@ impl ChangedFileEntry {
 struct SearchState {
     regex_enabled: bool,
     editor: Entity<Editor>,
+    pub matches: Vec<Oid>,
+    pub selected_index: Option<usize>,
 }
 
 pub struct SplitState {
@@ -949,6 +954,8 @@ impl GitGraph {
             search: SearchState {
                 regex_enabled: false,
                 editor: search_editor,
+                matches: Vec::new(),
+                selected_index: None,
             },
             project,
             workspace,
@@ -1221,6 +1228,41 @@ impl GitGraph {
         self.open_selected_commit_view(window, cx);
     }
 
+    fn confirm_search(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.get_selected_repository(cx) else {
+            return;
+        };
+
+        self.search.matches.clear();
+        self.search.selected_index = None;
+
+        let (request_tx, request_rx) = smol::channel::unbounded::<Vec<Oid>>();
+        let query = self.search.editor.read(cx).text(cx);
+
+        repo.update(cx, |repo, cx| {
+            repo.search_commits(
+                self.log_source.clone(),
+                SearchCommitArgs {
+                    query: query.into(),
+                    is_regex: false,
+                },
+                request_tx,
+                cx,
+            );
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok(oids) = request_rx.recv().await {
+                this.update(cx, |this, cx| {
+                    this.search.matches.extend(oids);
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     fn select_entry(&mut self, idx: usize, cx: &mut Context<Self>) {
         if self.selected_entry_idx == Some(idx) {
             return;
@@ -1393,7 +1435,8 @@ impl GitGraph {
                             .flex_1()
                             .min_w_0()
                             .overflow_hidden()
-                            .child(self.render_search_input(cx)),
+                            .child(self.render_search_input(cx))
+                            .on_action(cx.listener(Self::confirm_search)),
                     )
                     .child(
                         h_flex()
@@ -1448,9 +1491,16 @@ impl GitGraph {
                                     )
                                     .child(
                                         div().ml_2().min_w(px(40.)).child(
-                                            Label::new("0/0")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Disabled),
+                                            Label::new(format!(
+                                                "{}/{}",
+                                                self.search
+                                                    .selected_index
+                                                    .map(|index| index + 1)
+                                                    .unwrap_or(0),
+                                                self.search.matches.len()
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Disabled),
                                         ),
                                     ),
                             ),

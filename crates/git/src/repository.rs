@@ -50,6 +50,11 @@ pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 /// %x00 - Null byte separator, used to split up commit data
 static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 
+/// Used to get commits that match with a search
+/// %H - Full commit hash
+/// %x00 - Null byte separator, used to split up commit data
+static SEARCH_COMMIT_FORMAT: &str = "--format=%H%x00";
+
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
@@ -184,6 +189,21 @@ pub struct InitialGraphCommitData {
     pub sha: Oid,
     pub parents: SmallVec<[Oid; 1]>,
     pub ref_names: Vec<SharedString>,
+}
+
+pub fn commit_message_matches_query(message: &str, query: &str, is_regex: bool) -> Result<bool> {
+    if query.is_empty() {
+        return Ok(false);
+    }
+
+    if is_regex {
+        let regex = regex::RegexBuilder::new(query)
+            .case_insensitive(true)
+            .build()?;
+        Ok(regex.is_match(message))
+    } else {
+        Ok(message.to_lowercase().contains(&query.to_lowercase()))
+    }
 }
 
 struct CommitDataRequest {
@@ -709,6 +729,11 @@ impl LogSource {
     }
 }
 
+pub struct SearchCommitArgs {
+    pub query: SharedString,
+    pub is_regex: bool,
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -960,6 +985,15 @@ pub trait GitRepository: Send + Sync {
         log_order: LogOrder,
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>>;
+
+    fn search_commits(
+        &self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Vec<Oid>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        todo!("Remove default impl")
+    }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
 
@@ -2777,6 +2811,60 @@ impl GitRepository for RealGitRepository {
                         break;
                     }
                     lines.clear();
+                }
+            }
+
+            child.status().await?;
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn search_commits(
+        &self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Vec<Oid>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+
+        dbg!("searching commits");
+
+        async move {
+            let git = git_binary?;
+
+            let mut command = git.build_command(&[
+                "log",
+                SEARCH_COMMIT_FORMAT,
+                log_source.get_arg()?,
+                "--grep",
+                search_args.query.as_str(),
+            ]);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+
+            let mut child = command.spawn()?;
+            let stdout = child.stdout.take().context("failed to get stdout")?;
+            let mut reader = BufReader::new(stdout);
+
+            let mut line_buffer = String::new();
+
+            loop {
+                line_buffer.clear();
+                let bytes_read = reader.read_line(&mut line_buffer).await?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                let parts = line_buffer.split('\x00');
+                let commits = parts
+                    .into_iter()
+                    .filter_map(|sha| Oid::from_str(dbg!(sha)).ok())
+                    .collect::<Vec<_>>();
+
+                if commits.is_empty() || request_tx.send(commits).await.is_err() {
+                    break;
                 }
             }
 
