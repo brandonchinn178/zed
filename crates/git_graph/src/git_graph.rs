@@ -543,6 +543,7 @@ struct GraphData {
     lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
+    oid_to_line: HashMap<Oid, usize>,
 }
 
 impl GraphData {
@@ -559,6 +560,7 @@ impl GraphData {
             lines: Vec::default(),
             active_commit_lines: HashMap::default(),
             active_commit_lines_by_parent: HashMap::default(),
+            oid_to_line: HashMap::default(),
         }
     }
 
@@ -570,6 +572,7 @@ impl GraphData {
         self.lines.clear();
         self.active_commit_lines.clear();
         self.active_commit_lines_by_parent.clear();
+        self.oid_to_line.clear();
         self.next_color = BranchColor(0);
         self.max_commit_count = AllCommitCount::NotLoaded;
         self.max_lanes = 0;
@@ -696,6 +699,7 @@ impl GraphData {
 
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
+            self.oid_to_line.insert(commit.sha, self.commits.len());
             self.commits.push(Rc::new(CommitEntry {
                 data: commit.clone(),
                 lane: commit_lane,
@@ -1477,7 +1481,37 @@ impl GitGraph {
                                         .style(ButtonStyle::Subtle)
                                         .shape(ui::IconButtonShape::Square)
                                         .icon_size(IconSize::Small)
-                                        .disabled(true),
+                                        .disabled(true)
+                                        .when(
+                                            !self.search.matches.is_empty(),
+                                            |this| {
+                                                this.disabled(false).on_click(cx.listener(
+                                                    |this, _, _, cx| {
+                                                        let mut prev_selection = this
+                                                            .search
+                                                            .selected_index
+                                                            .unwrap_or_default();
+
+                                                        if prev_selection == 0 {
+                                                            prev_selection =
+                                                                this.search.matches.len() - 1;
+                                                        } else {
+                                                            prev_selection -= 1;
+                                                        }
+
+                                                        let oid =
+                                                            this.search.matches[prev_selection];
+
+                                                        this.search.selected_index =
+                                                            Some(prev_selection);
+                                                        this.select_commit_by_sha(
+                                                            &oid.to_string(),
+                                                            cx,
+                                                        );
+                                                    },
+                                                ))
+                                            },
+                                        ),
                                     )
                                     .child(
                                         IconButton::new(
@@ -1487,7 +1521,36 @@ impl GitGraph {
                                         .style(ButtonStyle::Subtle)
                                         .shape(ui::IconButtonShape::Square)
                                         .icon_size(IconSize::Small)
-                                        .disabled(true),
+                                        .disabled(true)
+                                        .when(
+                                            !self.search.matches.is_empty(),
+                                            |this| {
+                                                this.disabled(false).on_click(cx.listener(
+                                                    |this, _, _, cx| {
+                                                        let mut next_selection = this
+                                                            .search
+                                                            .selected_index
+                                                            .unwrap_or_default()
+                                                            + 1;
+                                                        if next_selection
+                                                            >= this.search.matches.len()
+                                                        {
+                                                            next_selection = 0;
+                                                        }
+
+                                                        let oid =
+                                                            this.search.matches[next_selection];
+
+                                                        this.search.selected_index =
+                                                            Some(next_selection);
+                                                        this.select_commit_by_sha(
+                                                            &oid.to_string(),
+                                                            cx,
+                                                        );
+                                                    },
+                                                ))
+                                            },
+                                        ),
                                     )
                                     .child(
                                         div().ml_2().min_w(px(40.)).child(
@@ -1500,7 +1563,9 @@ impl GitGraph {
                                                 self.search.matches.len()
                                             ))
                                             .size(LabelSize::Small)
-                                            .color(Color::Disabled),
+                                            .when(self.search.matches.is_empty(), |this| {
+                                                this.color(Color::Disabled)
+                                            }),
                                         ),
                                     ),
                             ),

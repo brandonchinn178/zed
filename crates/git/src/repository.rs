@@ -2828,8 +2828,6 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
 
-        dbg!("searching commits");
-
         async move {
             let git = git_binary?;
 
@@ -2857,10 +2855,11 @@ impl GitRepository for RealGitRepository {
                     break;
                 }
 
+                // todo! fix this, we are getting new lines here
                 let parts = line_buffer.split('\x00');
                 let commits = parts
                     .into_iter()
-                    .filter_map(|sha| Oid::from_str(dbg!(sha)).ok())
+                    .filter_map(|sha| Oid::from_str(sha).ok())
                     .collect::<Vec<_>>();
 
                 if commits.is_empty() || request_tx.send(commits).await.is_err() {
