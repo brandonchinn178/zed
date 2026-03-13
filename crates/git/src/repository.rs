@@ -2862,6 +2862,7 @@ impl GitRepository for RealGitRepository {
                     .filter_map(|sha| Oid::from_str(sha).ok())
                     .collect::<Vec<_>>();
 
+                // todo! buffer commit ids to not notify for every result
                 if commits.is_empty() || request_tx.send(commits).await.is_err() {
                     break;
                 }
