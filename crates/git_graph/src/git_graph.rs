@@ -1266,7 +1266,19 @@ impl GitGraph {
 
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(oids) = request_rx.recv().await {
+                if oids.is_empty() {
+                    // todo! maybe a debug panic here
+                    continue;
+                }
+
                 this.update(cx, |this, cx| {
+                    if let Some(oid) = oids.first()
+                        && this.search.selected_index.is_none()
+                    {
+                        this.search.selected_index = Some(0);
+                        this.select_commit_by_sha(*oid, cx);
+                    }
+
                     this.search.matches.extend(oids);
                     cx.notify();
                 })
@@ -1541,8 +1553,9 @@ impl GitGraph {
                                                         let mut next_selection = this
                                                             .search
                                                             .selected_index
-                                                            .unwrap_or_default()
-                                                            + 1;
+                                                            .map(|index| index + 1)
+                                                            .unwrap_or_default();
+
                                                         if next_selection
                                                             >= this.search.matches.len()
                                                         {
