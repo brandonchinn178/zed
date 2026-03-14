@@ -1,4 +1,4 @@
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, IndexSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::{
@@ -201,9 +201,25 @@ impl ChangedFileEntry {
     }
 }
 
+enum QueryState {
+    Pending(SharedString),
+    Confirmed((SharedString, Task<()>)),
+    Empty,
+}
+
+impl QueryState {
+    fn next_state(&mut self) {
+        match self {
+            Self::Confirmed((query, _)) => *self = Self::Pending(std::mem::take(query)),
+            _ => {}
+        };
+    }
+}
+
 struct SearchState {
     regex_enabled: bool,
     editor: Entity<Editor>,
+    state: QueryState,
     pub matches: Vec<Oid>,
     pub selected_index: Option<usize>,
 }
@@ -850,7 +866,7 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
 
 pub struct GitGraph {
     focus_handle: FocusHandle,
-    search: SearchState,
+    search_state: SearchState,
     graph_data: GraphData,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -875,6 +891,12 @@ pub struct GitGraph {
 }
 
 impl GitGraph {
+    fn refresh_search_state(&mut self, cx: &mut Context<Self>) {
+        self.search_state.matches.clear();
+        self.search_state.selected_index = None;
+        self.search_state.state.next_state();
+    }
+
     fn row_height(cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.buffer_font_size(cx);
@@ -918,6 +940,7 @@ impl GitGraph {
                 if this.selected_repo_id != *changed_repo_id {
                     this.selected_repo_id = *changed_repo_id;
                     this.graph_data.clear();
+                    this.refresh_search_state(cx);
                     cx.notify();
                 }
             }
@@ -955,11 +978,12 @@ impl GitGraph {
 
         let mut this = GitGraph {
             focus_handle,
-            search: SearchState {
+            search_state: SearchState {
                 regex_enabled: false,
                 editor: search_editor,
                 matches: Vec::new(),
                 selected_index: None,
+                state: QueryState::Empty,
             },
             project,
             workspace,
@@ -1059,6 +1083,7 @@ impl GitGraph {
                 // NOTE: this fixes an loading performance regression
                 if repository.read(cx).scan_id > 1 {
                     self.graph_data.clear();
+                    self.refresh_search_state(cx);
                     cx.notify();
                 }
             }
@@ -1241,22 +1266,21 @@ impl GitGraph {
         self.open_selected_commit_view(window, cx);
     }
 
-    fn confirm_search(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+    fn search(&mut self, query: SharedString, cx: &mut Context<Self>) {
         let Some(repo) = self.get_selected_repository(cx) else {
             return;
         };
 
-        self.search.matches.clear();
-        self.search.selected_index = None;
+        self.search_state.matches.clear();
+        self.search_state.selected_index = None;
 
         let (request_tx, request_rx) = smol::channel::unbounded::<Vec<Oid>>();
-        let query = self.search.editor.read(cx).text(cx);
 
         repo.update(cx, |repo, cx| {
             repo.search_commits(
                 self.log_source.clone(),
                 SearchCommitArgs {
-                    query: query.into(),
+                    query: query.clone(),
                     is_regex: false,
                 },
                 request_tx,
@@ -1264,7 +1288,7 @@ impl GitGraph {
             );
         });
 
-        cx.spawn_in(window, async move |this, cx| {
+        let search_task = cx.spawn(async move |this, cx| {
             while let Ok(oids) = request_rx.recv().await {
                 if oids.is_empty() {
                     // todo! maybe a debug panic here
@@ -1273,19 +1297,25 @@ impl GitGraph {
 
                 this.update(cx, |this, cx| {
                     if let Some(oid) = oids.first()
-                        && this.search.selected_index.is_none()
+                        && this.search_state.selected_index.is_none()
                     {
-                        this.search.selected_index = Some(0);
+                        this.search_state.selected_index = Some(0);
                         this.select_commit_by_sha(*oid, cx);
                     }
 
-                    this.search.matches.extend(oids);
+                    this.search_state.matches.extend(oids);
                     cx.notify();
                 })
                 .ok();
             }
-        })
-        .detach();
+        });
+
+        self.search_state.state = QueryState::Confirmed((query, search_task));
+    }
+
+    fn confirm_search(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let query = self.search_state.editor.read(cx).text(cx).into();
+        self.search(query, cx);
     }
 
     fn select_entry(
@@ -1410,7 +1440,7 @@ impl GitGraph {
     fn render_search_input(&self, cx: &App) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = gpui::TextStyle {
-            color: if self.search.editor.read(cx).read_only(cx) {
+            color: if self.search_state.editor.read(cx).read_only(cx) {
                 cx.theme().colors().text_disabled
             } else {
                 cx.theme().colors().text
@@ -1425,7 +1455,7 @@ impl GitGraph {
         };
 
         EditorElement::new(
-            &self.search.editor,
+            &self.search_state.editor,
             EditorStyle {
                 background: cx.theme().colors().toolbar_background,
                 local_player: cx.theme().players().local(),
@@ -1437,7 +1467,7 @@ impl GitGraph {
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme_colors = cx.theme().colors();
-        let query_focus_handle = self.search.editor.focus_handle(cx);
+        let query_focus_handle = self.search_state.editor.focus_handle(cx);
 
         h_flex()
             .w_full()
@@ -1478,7 +1508,7 @@ impl GitGraph {
                                     .style(ButtonStyle::Subtle)
                                     .shape(ui::IconButtonShape::Square)
                                     .icon_size(IconSize::Small)
-                                    .toggle_state(self.search.regex_enabled)
+                                    .toggle_state(self.search_state.regex_enabled)
                                     .tooltip(Tooltip::text("Use Regular Expressions"))
                                     .on_click({
                                         let query_focus_handle = query_focus_handle.clone();
@@ -1486,7 +1516,8 @@ impl GitGraph {
                                             if !query_focus_handle.is_focused(window) {
                                                 window.focus(&query_focus_handle, cx);
                                             }
-                                            this.search.regex_enabled = !this.search.regex_enabled;
+                                            this.search_state.regex_enabled =
+                                                !this.search_state.regex_enabled;
                                             cx.notify();
                                         })
                                     }),
@@ -1509,26 +1540,26 @@ impl GitGraph {
                                         .icon_size(IconSize::Small)
                                         .disabled(true)
                                         .when(
-                                            !self.search.matches.is_empty(),
+                                            !self.search_state.matches.is_empty(),
                                             |this| {
                                                 this.disabled(false).on_click(cx.listener(
                                                     |this, _, _, cx| {
                                                         let mut prev_selection = this
-                                                            .search
+                                                            .search_state
                                                             .selected_index
                                                             .unwrap_or_default();
 
                                                         if prev_selection == 0 {
                                                             prev_selection =
-                                                                this.search.matches.len() - 1;
+                                                                this.search_state.matches.len() - 1;
                                                         } else {
                                                             prev_selection -= 1;
                                                         }
 
-                                                        let oid =
-                                                            this.search.matches[prev_selection];
+                                                        let oid = this.search_state.matches
+                                                            [prev_selection];
 
-                                                        this.search.selected_index =
+                                                        this.search_state.selected_index =
                                                             Some(prev_selection);
                                                         this.select_commit_by_sha(oid, cx);
                                                     },
@@ -1546,26 +1577,26 @@ impl GitGraph {
                                         .icon_size(IconSize::Small)
                                         .disabled(true)
                                         .when(
-                                            !self.search.matches.is_empty(),
+                                            !self.search_state.matches.is_empty(),
                                             |this| {
                                                 this.disabled(false).on_click(cx.listener(
                                                     |this, _, _, cx| {
                                                         let mut next_selection = this
-                                                            .search
+                                                            .search_state
                                                             .selected_index
                                                             .map(|index| index + 1)
                                                             .unwrap_or_default();
 
                                                         if next_selection
-                                                            >= this.search.matches.len()
+                                                            >= this.search_state.matches.len()
                                                         {
                                                             next_selection = 0;
                                                         }
 
-                                                        let oid =
-                                                            this.search.matches[next_selection];
+                                                        let oid = this.search_state.matches
+                                                            [next_selection];
 
-                                                        this.search.selected_index =
+                                                        this.search_state.selected_index =
                                                             Some(next_selection);
                                                         this.select_commit_by_sha(oid, cx);
                                                     },
@@ -1577,14 +1608,14 @@ impl GitGraph {
                                         div().ml_2().min_w(px(40.)).child(
                                             Label::new(format!(
                                                 "{}/{}",
-                                                self.search
+                                                self.search_state
                                                     .selected_index
                                                     .map(|index| index + 1)
                                                     .unwrap_or(0),
-                                                self.search.matches.len()
+                                                self.search_state.matches.len()
                                             ))
                                             .size(LabelSize::Small)
-                                            .when(self.search.matches.is_empty(), |this| {
+                                            .when(self.search_state.matches.is_empty(), |this| {
                                                 this.color(Color::Disabled)
                                             }),
                                         ),
@@ -2343,6 +2374,12 @@ impl GitGraph {
 
 impl Render for GitGraph {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // This happens when we changed branches, we should refresh our search as well
+        if let QueryState::Pending(query) = &mut self.search_state.state {
+            let query = std::mem::take(query);
+            self.search_state.state = QueryState::Empty;
+            self.search(query, cx);
+        }
         let description_width_fraction = 0.72;
         let date_width_fraction = 0.12;
         let author_width_fraction = 0.10;
