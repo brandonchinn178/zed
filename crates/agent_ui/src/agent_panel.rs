@@ -5168,7 +5168,7 @@ mod tests {
             let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
             let panel =
                 cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.set_left_drawer(panel.clone(), cx);
+            workspace.set_left_drawer(panel, cx);
         });
 
         cx.run_until_parked();

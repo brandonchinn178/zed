@@ -721,7 +721,7 @@ async fn initialize_agent_panel(
         let prompt_builder = prompt_builder.clone();
         cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
             let prompt_builder = prompt_builder.clone();
-            setup_or_teardown_ai_panels(workspace, prompt_builder.clone(), window, cx)
+            setup_or_teardown_ai_panels(workspace, prompt_builder, window, cx)
                 .detach_and_log_err(cx);
         })
         .detach();

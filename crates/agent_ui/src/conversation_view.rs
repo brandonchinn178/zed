@@ -3378,7 +3378,7 @@ pub(crate) mod tests {
                 cx.new(|cx| TextThreadStore::fake(workspace.project().clone(), cx));
             let panel =
                 cx.new(|cx| crate::AgentPanel::new(workspace, text_thread_store, None, window, cx));
-            workspace.set_left_drawer(panel.clone(), cx);
+            workspace.set_left_drawer(panel, cx);
 
             // Open the dock and activate the agent panel so it's visible
             workspace.focus_drawer::<crate::AgentPanel>(window, cx);
