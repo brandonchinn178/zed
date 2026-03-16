@@ -43,9 +43,7 @@ use crate::{
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
-pub use agent_server_store::{
-    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
-};
+pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -3651,11 +3649,11 @@ impl Project {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited) {
+        if matches!(event, BufferEvent::Edited { .. }) {
             cx.emit(Event::BufferEdited);
         }
 
