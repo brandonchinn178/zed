@@ -16,7 +16,8 @@ use worktree::Snapshot;
 
 use crate::{
     DevContainerContext, DevContainerFeature, DevContainerTemplate,
-    model::{DevContainer, read_devcontainer_configuration, spawn_dev_container},
+    devcontainer_json::DevContainer,
+    model::{read_devcontainer_configuration, spawn_dev_container},
 };
 
 /// Represents a discovered devcontainer configuration

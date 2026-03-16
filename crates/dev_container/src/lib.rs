@@ -46,6 +46,7 @@ use http_client::{AsyncBody, HttpClient};
 
 mod command_json;
 mod devcontainer_api;
+mod devcontainer_json;
 mod docker;
 mod features;
 mod model;

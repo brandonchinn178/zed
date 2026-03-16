@@ -7,9 +7,9 @@ use serde::Deserialize;
 use serde_json_lenient::Value;
 
 use crate::{
-    DevContainerErrorV2, DockerManifestsResponse, get_deserialized_response,
-    model::{FeatureOptions, MountDefinition},
-    safe_id_upper,
+    DevContainerErrorV2, DockerManifestsResponse,
+    devcontainer_json::{FeatureOptions, MountDefinition},
+    get_deserialized_response, safe_id_upper,
 };
 
 /// Parsed components of an OCI feature reference such as
