@@ -120,6 +120,26 @@ pub fn write_editable_with_markers(
     }
 }
 
+/// Check if the output represents a "no edits" signal for V0316:
+/// the same marker tag appears twice in succession with no meaningful
+/// content between them (e.g. `<|marker_N|>\n<|marker_N|>`).
+pub fn is_repeated_final_marker(output: &str) -> bool {
+    let trimmed = output.trim();
+    let Some(prefix_end) = trimmed.find(MARKER_TAG_SUFFIX) else {
+        return false;
+    };
+    let first_tag_end = prefix_end + MARKER_TAG_SUFFIX.len();
+    let first_tag = &trimmed[..first_tag_end];
+
+    if !first_tag.starts_with(MARKER_TAG_PREFIX) {
+        return false;
+    }
+
+    let rest = &trimmed[first_tag_end..];
+    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    rest.trim() == first_tag
+}
+
 /// Strip any `<|marker_N|>` tags from `text`.
 ///
 /// When a marker tag sits on its own line (followed by `\n`), the trailing
@@ -543,6 +563,19 @@ mod tests {
         let output = "<|marker_1|>\naaa\n<|marker_1|>\nBBB\nccc\n<|marker_2|>";
         let result = apply_marker_span(old, output).unwrap();
         assert_eq!(result, "aaa\nBBB\nccc\n");
+    }
+
+    #[test]
+    fn test_is_repeated_final_marker() {
+        assert!(is_repeated_final_marker("<|marker_5|>\n<|marker_5|>"));
+        assert!(is_repeated_final_marker("<|marker_5|>\n<|marker_5|>\n"));
+        assert!(is_repeated_final_marker("  <|marker_3|>\n<|marker_3|>  "));
+        assert!(!is_repeated_final_marker(
+            "<|marker_2|>\nnew content\n<|marker_3|>"
+        ));
+        assert!(!is_repeated_final_marker("<|marker_2|>\n<|marker_3|>"));
+        assert!(!is_repeated_final_marker("no markers here"));
+        assert!(!is_repeated_final_marker(""));
     }
 
     #[test]

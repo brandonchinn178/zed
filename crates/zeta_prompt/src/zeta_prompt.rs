@@ -83,6 +83,7 @@ pub enum ZetaFormat {
     V0304VariableEdit,
     V0304SeedNoEdits,
     V0306SeedMultiRegions,
+    V0316SeedMultiRegions,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -234,6 +235,17 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
             ];
             TOKENS
         }
+        ZetaFormat::V0316SeedMultiRegions => {
+            static TOKENS: &[&str] = &[
+                seed_coder::FIM_SUFFIX,
+                seed_coder::FIM_PREFIX,
+                seed_coder::FIM_MIDDLE,
+                seed_coder::FILE_MARKER,
+                CURSOR_MARKER,
+                multi_region::MARKER_TAG_PREFIX,
+            ];
+            TOKENS
+        }
     }
 }
 
@@ -248,6 +260,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
         ZetaFormat::V0304VariableEdit => (1024, 0),
     }
@@ -265,6 +278,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => &[],
     }
 }
@@ -288,7 +302,8 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304SeedNoEdits
-        | ZetaFormat::V0306SeedMultiRegions => (
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -371,6 +386,14 @@ pub fn write_cursor_excerpt_section_for_format(
                 cursor_offset,
             ));
         }
+        ZetaFormat::V0316SeedMultiRegions => {
+            prompt.push_str(&build_v0316_cursor_prefix(
+                path,
+                context,
+                editable_range,
+                cursor_offset,
+            ));
+        }
     }
 }
 
@@ -400,6 +423,40 @@ fn build_v0306_cursor_prefix(
         section.push('\n');
     }
     section.push_str(seed_coder::SEPARATOR);
+    section
+}
+
+fn build_v0316_cursor_prefix(
+    path: &Path,
+    context: &str,
+    editable_range: &Range<usize>,
+    cursor_offset: usize,
+) -> String {
+    let mut section = String::new();
+    let path_str = path.to_string_lossy();
+    write!(
+        section,
+        "{}{}
+",
+        seed_coder::FILE_MARKER,
+        path_str
+    )
+    .ok();
+
+    section.push_str(&context[..editable_range.start]);
+
+    let editable_text = &context[editable_range.clone()];
+    let cursor_in_editable = cursor_offset - editable_range.start;
+    multi_region::write_editable_with_markers(
+        &mut section,
+        editable_text,
+        cursor_in_editable,
+        CURSOR_MARKER,
+    );
+
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
     section
 }
 
@@ -439,7 +496,8 @@ pub fn format_prompt_with_budget_for_format(
     let prompt = match format {
         ZetaFormat::V0211SeedCoder
         | ZetaFormat::V0304SeedNoEdits
-        | ZetaFormat::V0306SeedMultiRegions => {
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions => {
             let mut cursor_section = String::new();
             write_cursor_excerpt_section_for_format(
                 format,
@@ -470,24 +528,28 @@ pub fn format_prompt_with_budget_for_format(
                 cursor_offset,
             );
 
-            let cursor_tokens = estimate_tokens(cursor_section.len());
-            let budget_after_cursor = max_tokens.saturating_sub(cursor_tokens);
+            let max_bytes = max_tokens * 3;
+            let content_budget_tokens =
+                estimate_tokens(max_bytes.saturating_sub(cursor_section.len()));
 
             let edit_history_section = format_edit_history_within_budget(
                 &input.events,
                 "<|file_sep|>",
                 "edit history",
-                budget_after_cursor,
+                content_budget_tokens,
                 max_edit_event_count_for_format(&format),
             );
-            let edit_history_tokens = estimate_tokens(edit_history_section.len());
-            let budget_after_edit_history = budget_after_cursor.saturating_sub(edit_history_tokens);
+            let remaining_budget_tokens = estimate_tokens(
+                max_bytes
+                    .saturating_sub(cursor_section.len())
+                    .saturating_sub(edit_history_section.len()),
+            );
 
             let related_files_section = format_related_files_within_budget(
                 &related_files,
                 "<|file_sep|>",
                 "",
-                budget_after_edit_history,
+                remaining_budget_tokens,
             );
 
             let mut prompt = String::new();
@@ -533,7 +595,8 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0304VariableEdit
-        | ZetaFormat::V0306SeedMultiRegions => 6,
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions => 6,
     }
 }
 
@@ -552,7 +615,9 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0211SeedCoder
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304VariableEdit => String::new(),
-        ZetaFormat::V0304SeedNoEdits | ZetaFormat::V0306SeedMultiRegions => String::new(),
+        ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions => String::new(),
     }
 }
 
@@ -568,7 +633,8 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
         | ZetaFormat::v0226Hashline
-        | ZetaFormat::V0304VariableEdit => None,
+        | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0316SeedMultiRegions => None,
     }
 }
 
@@ -591,6 +657,8 @@ pub fn encode_patch_as_output_for_format(
         ZetaFormat::V0304SeedNoEdits | ZetaFormat::V0306SeedMultiRegions => {
             Ok(seed_coder::no_edits(patch))
         }
+        // V0316 teacher prompt encoding is not yet implemented.
+        ZetaFormat::V0316SeedMultiRegions => Ok(None),
         _ => Ok(None),
     }
 }
@@ -639,6 +707,14 @@ pub fn parse_zeta2_model_output(
         ZetaFormat::V0306SeedMultiRegions => (
             editable_range_in_context,
             if output.starts_with(seed_coder::NO_EDITS) {
+                old_editable_region.to_string()
+            } else {
+                multi_region::apply_marker_span(old_editable_region, output)?
+            },
+        ),
+        ZetaFormat::V0316SeedMultiRegions => (
+            editable_range_in_context,
+            if multi_region::is_repeated_final_marker(output) {
                 old_editable_region.to_string()
             } else {
                 multi_region::apply_marker_span(old_editable_region, output)?
@@ -705,24 +781,23 @@ fn format_edit_history_within_budget(
     max_tokens: usize,
     max_edit_event_count: usize,
 ) -> String {
+    let max_bytes = max_tokens.saturating_mul(3);
     let header = format!("{}{}\n", file_marker, edit_history_name);
-    let header_tokens = estimate_tokens(header.len());
-    if header_tokens >= max_tokens {
+    if header.len() >= max_bytes {
         return String::new();
     }
 
     let mut event_strings: Vec<String> = Vec::new();
-    let mut total_tokens = header_tokens;
+    let mut total_bytes = header.len();
 
     for event in events.iter().rev().take(max_edit_event_count) {
         let mut event_str = String::new();
         write_event(&mut event_str, event);
-        let event_tokens = estimate_tokens(event_str.len());
 
-        if total_tokens + event_tokens > max_tokens {
+        if total_bytes + event_str.len() > max_bytes {
             break;
         }
-        total_tokens += event_tokens;
+        total_bytes += event_str.len();
         event_strings.push(event_str);
     }
 
@@ -737,13 +812,18 @@ fn format_edit_history_within_budget(
     result
 }
 
-fn excerpt_rendered_tokens(excerpt: &RelatedExcerpt, file_max_row: u32) -> usize {
-    let needs_newline = !excerpt.text.ends_with('\n');
-    let needs_ellipsis = excerpt.row_range.end < file_max_row;
-    let len = excerpt.text.len()
-        + if needs_newline { "\n".len() } else { 0 }
-        + if needs_ellipsis { "...\n".len() } else { 0 };
-    estimate_tokens(len)
+fn excerpt_rendered_bytes(excerpt: &RelatedExcerpt, file_max_row: u32) -> usize {
+    excerpt.text.len()
+        + if !excerpt.text.ends_with('\n') {
+            "\n".len()
+        } else {
+            0
+        }
+        + if excerpt.row_range.end < file_max_row {
+            "...\n".len()
+        } else {
+            0
+        }
 }
 
 pub fn format_related_files_within_budget(
@@ -783,7 +863,8 @@ pub fn format_related_files_within_budget(
         .collect();
 
     // Sort the excerpts by their order and determine how many fit within the budget.
-    let mut total_tokens = 0;
+    let max_bytes = max_tokens.saturating_mul(3);
+    let mut total_bytes = 0;
     let mut included_excerpt_count = 0_usize;
     let mut included_file_indices = vec![false; related_files.len()];
     excerpt_candidates.sort_by_key(|e| (e.order, e.file_ix, e.excerpt_ix));
@@ -794,13 +875,13 @@ pub fn format_related_files_within_budget(
         let header_cost = if file_already_included {
             0
         } else {
-            estimate_tokens(file_headers[candidate.file_ix].len() + file_suffix.len())
+            file_headers[candidate.file_ix].len() + file_suffix.len()
         };
-        let excerpt_cost = excerpt_rendered_tokens(excerpt, file.max_row);
-        if total_tokens + header_cost + excerpt_cost > max_tokens {
+        let excerpt_cost = excerpt_rendered_bytes(excerpt, file.max_row);
+        if total_bytes + header_cost + excerpt_cost > max_bytes {
             break;
         }
-        total_tokens += header_cost + excerpt_cost;
+        total_bytes += header_cost + excerpt_cost;
         if !file_already_included {
             included_file_indices[candidate.file_ix] = true;
         }
@@ -2711,26 +2792,34 @@ pub mod seed_coder {
     ) -> String {
         let suffix_section = build_suffix_section(context, editable_range);
 
-        let suffix_tokens = estimate_tokens(suffix_section.len() + FIM_PREFIX.len());
-        let cursor_prefix_tokens = estimate_tokens(cursor_prefix_section.len() + FIM_MIDDLE.len());
-        let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
+        // Use byte-level budgeting to avoid accumulated rounding errors from
+        // multiple estimate_tokens (floor division) calls across components.
+        let max_bytes = max_tokens * 3;
+        let fixed_bytes = suffix_section.len()
+            + FIM_PREFIX.len()
+            + cursor_prefix_section.len()
+            + FIM_MIDDLE.len()
+            + 2; // two potential newline separators
+        let content_budget_tokens = estimate_tokens(max_bytes.saturating_sub(fixed_bytes));
 
         let edit_history_section = super::format_edit_history_within_budget(
             events,
             FILE_MARKER,
             "edit_history",
-            budget_after_cursor,
+            content_budget_tokens,
             max_edit_event_count_for_format(&ZetaFormat::V0211SeedCoder),
         );
-        let edit_history_tokens = estimate_tokens(edit_history_section.len() + "\n".len());
-        let budget_after_edit_history =
-            budget_after_cursor.saturating_sub(edit_history_tokens + "\n".len());
+        let remaining_budget_tokens = estimate_tokens(
+            max_bytes
+                .saturating_sub(fixed_bytes)
+                .saturating_sub(edit_history_section.len()),
+        );
 
         let related_files_section = super::format_related_files_within_budget(
             related_files,
             FILE_MARKER,
             "",
-            budget_after_edit_history,
+            remaining_budget_tokens,
         );
 
         let mut prompt = String::new();
@@ -4167,7 +4256,7 @@ mod tests {
         );
 
         assert_eq!(
-            format_with_budget(&input, 55),
+            format_with_budget(&input, 57),
             Some(
                 indoc! {r#"
                 <|file_sep|>edit history
