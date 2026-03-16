@@ -54,9 +54,9 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    MouseUpEvent, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
-    Subscription, SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, deferred, point, relative, size, transparent_black,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
+    SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
+    WindowOptions, actions, canvas, deferred, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -7176,6 +7176,18 @@ impl Workspace {
         }
     }
 
+    pub fn drawer_width<T: 'static>(&self) -> Option<Pixels> {
+        self.drawer_ref::<T>()
+            .and_then(|(_, drawer)| drawer.custom_width)
+    }
+
+    pub fn set_drawer_width<T: 'static>(&mut self, width: Option<Pixels>, cx: &mut Context<Self>) {
+        if let Some((_, drawer)) = self.drawer_mut::<T>() {
+            drawer.custom_width = width;
+            cx.notify();
+        }
+    }
+
     pub fn drawer_is_open<T: 'static>(&self) -> bool {
         if let Some((_, drawer)) = self.drawer_ref::<T>() {
             drawer.open
@@ -7290,19 +7302,6 @@ impl Workspace {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     cx.stop_propagation();
                 })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(move |workspace, _: &MouseUpEvent, _, cx| {
-                        let drawer = match position {
-                            DrawerPosition::Left => &mut workspace.left_drawer,
-                            DrawerPosition::Right => &mut workspace.right_drawer,
-                        };
-                        if let Some(drawer) = drawer {
-                            drawer.custom_width = None;
-                            cx.notify();
-                        }
-                    }),
-                )
                 .occlude();
             match position {
                 DrawerPosition::Left => deferred(
@@ -8182,6 +8181,7 @@ impl Render for Workspace {
                                                 );
                                             }
                                         }
+                                        workspace.serialize_workspace(window, cx);
                                     },
                                 ))
                             })

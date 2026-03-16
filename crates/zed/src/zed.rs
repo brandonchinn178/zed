@@ -688,6 +688,7 @@ fn setup_or_teardown_ai_panels(
                     let position = PanelHandle::position(&threads_panel, window, cx);
                     if !disable_ai && !have_panel {
                         workspace.add_panel(threads_panel, window, cx);
+                        let width = agent_drawer.read(cx).width();
                         match position {
                             workspace::dock::DockPosition::Left => {
                                 workspace.set_left_drawer(agent_drawer, cx)
@@ -699,6 +700,7 @@ fn setup_or_teardown_ai_panels(
                                 unreachable!("drawers cannot go on the bottom")
                             }
                         }
+                        workspace.set_drawer_width::<agent_ui::AgentPanel>(width, cx);
                     }
                 })
             });

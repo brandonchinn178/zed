@@ -787,7 +787,10 @@ impl AgentPanel {
             return;
         };
 
-        let width = self.width;
+        let width = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).drawer_width::<AgentPanel>());
         let selected_agent_type = self.selected_agent_type.clone();
         let start_thread_in = Some(self.start_thread_in);
 
@@ -1186,6 +1189,10 @@ impl AgentPanel {
 
     pub(crate) fn context_server_registry(&self) -> &Entity<ContextServerRegistry> {
         &self.context_server_registry
+    }
+
+    pub fn width(&self) -> Option<Pixels> {
+        self.width
     }
 
     pub fn is_visible(workspace: &Entity<Workspace>, cx: &App) -> bool {
