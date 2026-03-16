@@ -259,83 +259,90 @@ where
     T: PopoverTrigger + ButtonCommon,
     TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let all_models = self
-            .working_set
-            .featured_command_names(cx)
-            .into_iter()
-            .filter_map(|command_name| {
-                let command = self.working_set.command(&command_name, cx)?;
-                let menu_text = SharedString::from(Arc::from(command.menu_text()));
-                let label = command.label(cx);
-                let args = label.filter_range.end.ne(&label.text.len()).then(|| {
-                    SharedString::from(
-                        label.text[label.filter_range.end..label.text.len()].to_owned(),
-                    )
-                });
-                Some(SlashCommandEntry::Info(SlashCommandInfo {
-                    name: command_name.into(),
-                    description: menu_text,
-                    args,
-                    icon: command.icon(),
-                }))
-            })
-            .chain([SlashCommandEntry::Advert {
-                name: "create-your-command".into(),
-                renderer: |_, cx| {
-                    v_flex()
-                        .w_full()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .font_buffer(cx)
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    h_flex()
-                                        .items_center()
-                                        .gap_1p5()
-                                        .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
-                                        .child(
-                                            Label::new("create-your-command")
-                                                .size(LabelSize::Small)
-                                                .buffer_font(cx),
-                                        ),
-                                )
-                                .child(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        )
-                        .child(
-                            Label::new("Create your custom command")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .into_any_element()
-                },
-                on_confirm: |_, cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
-            }])
-            .collect::<Vec<_>>();
-
-        let delegate = SlashCommandDelegate {
-            all_commands: all_models.clone(),
-            active_context_editor: self.active_context_editor.clone(),
-            filtered_commands: all_models,
-            selected_index: 0,
-        };
-
-        let picker_view = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
-        });
-
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let handle = self
             .active_context_editor
             .read_with(cx, |this, _| this.slash_menu_handle.clone())
             .ok();
         PopoverMenu::new("model-switcher")
-            .menu(move |_window, _cx| Some(picker_view.clone()))
+            .menu(move |window, cx| {
+                let all_models = self
+                    .working_set
+                    .featured_command_names(cx)
+                    .into_iter()
+                    .filter_map(|command_name| {
+                        let command = self.working_set.command(&command_name, cx)?;
+                        let menu_text = SharedString::from(Arc::from(command.menu_text()));
+                        let label = command.label(cx);
+                        let args = label.filter_range.end.ne(&label.text.len()).then(|| {
+                            SharedString::from(
+                                label.text[label.filter_range.end..label.text.len()].to_owned(),
+                            )
+                        });
+                        Some(SlashCommandEntry::Info(SlashCommandInfo {
+                            name: command_name.into(),
+                            description: menu_text,
+                            args,
+                            icon: command.icon(),
+                        }))
+                    })
+                    .chain([SlashCommandEntry::Advert {
+                        name: "create-your-command".into(),
+                        renderer: |_, cx| {
+                            v_flex()
+                                .w_full()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .font_buffer(cx)
+                                        .items_center()
+                                        .justify_between()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    Icon::new(IconName::Plus)
+                                                        .size(IconSize::XSmall),
+                                                )
+                                                .child(
+                                                    Label::new("create-your-command")
+                                                        .size(LabelSize::Small)
+                                                        .buffer_font(cx),
+                                                ),
+                                        )
+                                        .child(
+                                            Icon::new(IconName::ArrowUpRight)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    Label::new("Create your custom command")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .into_any_element()
+                        },
+                        on_confirm: |_, cx| {
+                            cx.open_url("https://zed.dev/docs/extensions/slash-commands")
+                        },
+                    }])
+                    .collect::<Vec<_>>();
+
+                let delegate = SlashCommandDelegate {
+                    all_commands: all_models.clone(),
+                    active_context_editor: self.active_context_editor.clone(),
+                    filtered_commands: all_models,
+                    selected_index: 0,
+                };
+
+                let picker_view = cx.new(|cx| {
+                    Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+                });
+
+                Some(picker_view.clone())
+            })
             .trigger_with_tooltip(self.trigger, self.tooltip)
             .attach(gpui::Corner::TopLeft)
             .anchor(gpui::Corner::BottomLeft)
