@@ -34,6 +34,37 @@ use crate::{
  *
  */
 
+#[derive(Clone, Debug, Serialize, Eq, PartialEq, Default)]
+struct ZedCustomizationsWrapper {
+    zed: ZedCustomization,
+}
+
+// Custom deserializer that parses the entire customizations object as a
+// serde_json_lenient::Value first, then extracts the "zed" portion.
+// This avoids a bug in serde_json_lenient's `ignore_value` codepath which
+// does not handle trailing commas in skipped values.
+impl<'de> Deserialize<'de> for ZedCustomizationsWrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let zed = value
+            .get("zed")
+            .map(|zed_value| serde_json_lenient::from_value::<ZedCustomization>(zed_value.clone()))
+            .transpose()
+            .map_err(serde::de::Error::custom)?
+            .unwrap_or_default();
+        Ok(ZedCustomizationsWrapper { zed })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Default)]
+struct ZedCustomization {
+    #[serde(default)]
+    extensions: Vec<String>,
+}
+
 /*
  * - What's left now:
  * INITIALIZING the dev container (next week)
@@ -75,8 +106,7 @@ pub(crate) struct DevContainer {
     mounts: Option<Vec<MountDefinition>>,
     features: Option<HashMap<String, FeatureOptions>>,
     override_feature_install_order: Option<Vec<String>>,
-    // TODO
-    customizations: Option<HashMap<String, Value>>,
+    customizations: Option<ZedCustomizationsWrapper>,
     build: Option<ContainerBuild>,
     #[serde(default, deserialize_with = "deserialize_string_or_int")]
     app_port: Option<String>,
@@ -596,6 +626,7 @@ impl DevContainerManifest {
             container_id: running_container.id,
             remote_user,
             remote_workspace_folder,
+            extension_ids: self.extension_ids(),
         })
     }
 
@@ -1226,6 +1257,14 @@ impl DevContainerManifest {
 
         Ok(command)
     }
+
+    fn extension_ids(&self) -> Vec<String> {
+        self.dev_container()
+            .customizations
+            .as_ref()
+            .map(|c| c.zed.extensions.clone())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1745,20 +1784,6 @@ pub(crate) async fn read_devcontainer_configuration(
     Ok(dev_container.dev_container().clone())
 }
 
-/// New and improved flow should look like this:
-/// 1. parse the devcontainer file
-/// 2. ensure that object is valid
-/// 3. check for disallowed features (?)
-/// 4. run any initializeCommands
-/// 5. If dockerfile or image config
-///     1. check for existing container by params + id labels (pending rebuild)
-///     2. If exists and running, return it
-///     3. If exists and not running, start it
-///     4. If not exists
-///         1. Build it
-///         2. Run the built thing you just made
-/// 6. If docker-compose config
-///     1. TODO - this is the next thing
 pub(crate) async fn spawn_dev_container(
     context: &DevContainerContext,
     environment: HashMap<String, String>,
@@ -1804,6 +1829,7 @@ pub(crate) async fn spawn_dev_container(
             container_id: docker_ps.id,
             remote_user: remote_user,
             remote_workspace_folder: remote_folder,
+            extension_ids: devcontainer_manifest.extension_ids(),
         })
     } else {
         log::info!("Existing container not found. Building");
@@ -2425,8 +2451,8 @@ mod test {
             ConfigStatus, ContainerBuild, DevContainer, DevContainerBuildType,
             DevContainerManifest, DockerInspect, FeatureOptions, ForwardPort, HostRequirements,
             LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
-            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe,
-            deserialize_devcontainer_json, get_remote_user_from_config,
+            PortAttributeProtocol, PortAttributes, ShutdownAction, UserEnvProbe, ZedCustomization,
+            ZedCustomizationsWrapper, deserialize_devcontainer_json, get_remote_user_from_config,
         },
     };
     const TEST_PROJECT_PATH: &str = "/path/to/local/project";
@@ -2544,6 +2570,83 @@ mod test {
     //
     #[test]
     fn should_validate_incorrect_shutdown_action_for_devcontainer() {}
+
+    #[test]
+    fn should_deserialize_customizations_with_unknown_keys() {
+        let json_with_other_customizations = r#"
+            {
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                "customizations": {
+                  "vscode": {
+                    "extensions": [
+                      "dbaeumer.vscode-eslint",
+                      "GitHub.vscode-pull-request-github",
+                    ],
+                  },
+                  "zed": {
+                    "extensions": ["vue", "ruby"],
+                  },
+                  "codespaces": {
+                    "repositories": {
+                      "devcontainers/features": {
+                        "permissions": {
+                          "contents": "write",
+                          "workflows": "write",
+                        },
+                      },
+                    },
+                  },
+                },
+            }
+        "#;
+
+        let result = deserialize_devcontainer_json(json_with_other_customizations);
+
+        assert!(
+            result.is_ok(),
+            "Should ignore unknown customization keys, but got: {:?}",
+            result.err()
+        );
+        let devcontainer = result.expect("ok");
+        assert_eq!(
+            devcontainer.customizations,
+            Some(ZedCustomizationsWrapper {
+                zed: ZedCustomization {
+                    extensions: vec!["vue".to_string(), "ruby".to_string()]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn should_deserialize_customizations_without_zed_key() {
+        let json_without_zed = r#"
+            {
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                "customizations": {
+                    "vscode": {
+                        "extensions": ["dbaeumer.vscode-eslint"]
+                    }
+                }
+            }
+        "#;
+
+        let result = deserialize_devcontainer_json(json_without_zed);
+
+        assert!(
+            result.is_ok(),
+            "Should handle missing zed key in customizations, but got: {:?}",
+            result.err()
+        );
+        let devcontainer = result.expect("ok");
+        assert_eq!(
+            devcontainer.customizations,
+            Some(ZedCustomizationsWrapper {
+                zed: ZedCustomization { extensions: vec![] }
+            })
+        );
+    }
+
     #[test]
     fn should_deserialize_simple_devcontainer_json() {
         let given_bad_json = "{ \"image\": 123 }";
@@ -2641,7 +2744,17 @@ mod test {
                 "shutdownAction": "stopContainer",
                 "overrideCommand": true,
                 "workspaceFolder": "/workspaces",
-                "workspaceMount": "/workspaces/app"
+                "workspaceMount": "source=/app,target=/workspaces/app,type=bind,consistency=cached",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
             }
             "#;
 
@@ -2764,9 +2877,14 @@ mod test {
                 override_command: Some(true),
                 workspace_folder: Some("/workspaces".to_string()),
                 workspace_mount: Some(MountDefinition {
-                    source: "/".to_string(),
-                    target: "/".to_string(),
+                    source: "/app".to_string(),
+                    target: "/workspaces/app".to_string(),
                     mount_type: Some("bind".to_string())
+                }),
+                customizations: Some(ZedCustomizationsWrapper {
+                    zed: ZedCustomization {
+                        extensions: vec!["html".to_string()]
+                    }
                 }),
                 ..Default::default()
             }
@@ -2774,6 +2892,9 @@ mod test {
 
         assert_eq!(devcontainer.build_type(), DevContainerBuildType::Image);
     }
+
+    #[test]
+    fn should_install_zed_extensions_from_devcontainer_json() {}
 
     #[test]
     fn should_deserialize_docker_compose_devcontainer_json() {

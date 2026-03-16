@@ -11,6 +11,7 @@ use dev_container::{
 };
 use editor::Editor;
 
+use extension_host::ExtensionStore;
 use futures::{FutureExt, channel::oneshot, future::Shared};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
@@ -1863,9 +1864,9 @@ impl RemoteServerProjects {
                 .map(|env| env.into_iter().collect::<std::collections::HashMap<_, _>>())
                 .unwrap_or_default();
 
-            let (connection, starting_dir) =
+            let (dev_container_connection, starting_dir) =
                 match start_dev_container_with_config(context, config, environment).await {
-                    Ok((c, s)) => (Connection::DevContainer(c), s),
+                    Ok((c, s)) => (c, s),
                     Err(e) => {
                         log::error!("Failed to start dev container: {:?}", e);
                         cx.prompt(
@@ -1889,6 +1890,16 @@ impl RemoteServerProjects {
                         return;
                     }
                 };
+            cx.update(|_, cx| {
+                ExtensionStore::global(cx).update(cx, |this, cx| {
+                    for extension in &dev_container_connection.extension_ids {
+                        log::info!("Installing extension {extension} from devcontainer");
+                        this.install_latest_extension(Arc::from(extension.clone()), cx);
+                    }
+                })
+            })
+            .log_err();
+
             entity
                 .update(cx, |_, cx| {
                     cx.emit(DismissEvent);
@@ -1899,7 +1910,7 @@ impl RemoteServerProjects {
                 return;
             };
             let result = open_remote_project(
-                connection.into(),
+                Connection::DevContainer(dev_container_connection).into(),
                 vec![starting_dir].into_iter().map(PathBuf::from).collect(),
                 app_state,
                 OpenOptions {
