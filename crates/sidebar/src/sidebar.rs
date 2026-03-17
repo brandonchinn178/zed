@@ -99,6 +99,7 @@ struct ThreadEntry {
     is_title_generating: bool,
     highlight_positions: Vec<usize>,
     worktree_name: Option<SharedString>,
+    worktree_path: Option<SharedString>,
     worktree_highlight_positions: Vec<usize>,
     diff_stats: DiffStats,
 }
@@ -602,6 +603,7 @@ impl Sidebar {
                             is_title_generating: false,
                             highlight_positions: Vec::new(),
                             worktree_name: None,
+                            worktree_path: None,
                             worktree_highlight_positions: Vec::new(),
                             diff_stats: DiffStats::default(),
                         });
@@ -610,28 +612,31 @@ impl Sidebar {
 
                 // Load threads from linked git worktrees of this workspace's repos.
                 {
-                    let mut linked_worktree_queries: Vec<(PathList, SharedString, Arc<Path>)> =
-                        Vec::new();
+                    let mut linked_worktree_queries: Vec<(
+                        PathList,
+                        SharedString,
+                        Arc<Path>,
+                        SharedString,
+                    )> = Vec::new();
                     for snapshot in root_repository_snapshots(workspace, cx) {
                         if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
                             continue;
                         }
                         for git_worktree in snapshot.linked_worktrees() {
-                            let name = git_worktree
-                                .path
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string();
+                            let branch_name: SharedString =
+                                git_worktree.branch().to_string().into();
+                            let worktree_path_display: SharedString =
+                                git_worktree.path.display().to_string().into();
                             linked_worktree_queries.push((
                                 PathList::new(std::slice::from_ref(&git_worktree.path)),
-                                name.into(),
+                                branch_name,
                                 Arc::from(git_worktree.path.as_path()),
+                                worktree_path_display,
                             ));
                         }
                     }
 
-                    for (worktree_path_list, worktree_name, worktree_path) in
+                    for (worktree_path_list, worktree_name, worktree_path, worktree_path_display) in
                         &linked_worktree_queries
                     {
                         let target_workspace =
@@ -682,6 +687,7 @@ impl Sidebar {
                                     is_title_generating: false,
                                     highlight_positions: Vec::new(),
                                     worktree_name: Some(worktree_name.clone()),
+                                    worktree_path: Some(worktree_path_display.clone()),
                                     worktree_highlight_positions: Vec::new(),
                                     diff_stats: DiffStats::default(),
                                 });
@@ -1720,6 +1726,9 @@ impl Sidebar {
             .when_some(thread.worktree_name.clone(), |this, name| {
                 this.worktree(name)
             })
+            .when_some(thread.worktree_path.clone(), |this, path| {
+                this.worktree_path(path)
+            })
             .worktree_highlight_positions(thread.worktree_highlight_positions.clone())
             .when_some(timestamp, |this, ts| this.timestamp(ts))
             .highlight_positions(thread.highlight_positions.to_vec())
@@ -2641,6 +2650,7 @@ mod tests {
                     is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
+                    worktree_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
                 }),
@@ -2664,6 +2674,7 @@ mod tests {
                     is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
+                    worktree_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
                 }),
@@ -2687,6 +2698,7 @@ mod tests {
                     is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
+                    worktree_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
                 }),
@@ -2710,6 +2722,7 @@ mod tests {
                     is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
+                    worktree_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
                 }),
@@ -2733,6 +2746,7 @@ mod tests {
                     is_title_generating: false,
                     highlight_positions: Vec::new(),
                     worktree_name: None,
+                    worktree_path: None,
                     worktree_highlight_positions: Vec::new(),
                     diff_stats: DiffStats::default(),
                 }),
@@ -4430,8 +4444,8 @@ mod tests {
             visible_entries_as_strings(&sidebar, cx),
             vec![
                 "v [project]",
-                "  Thread A {wt-feature-a}",
-                "  Thread B {wt-feature-b}",
+                "  Thread A {feature-a}",
+                "  Thread B {feature-b}",
             ]
         );
 
@@ -4450,7 +4464,7 @@ mod tests {
         // under the main repo.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  Thread A {wt-feature-a}",]
+            vec!["v [project]", "  Thread A {feature-a}",]
         );
     }
 
@@ -4518,7 +4532,7 @@ mod tests {
         // Thread should appear under the main repo with a worktree chip.
         assert_eq!(
             visible_entries_as_strings(&sidebar, cx),
-            vec!["v [project]", "  WT Thread {wt-feature-a}"],
+            vec!["v [project]", "  WT Thread {feature-a}"],
         );
 
         // Only 1 workspace should exist.
@@ -4638,7 +4652,7 @@ mod tests {
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0], "v [project]");
         assert!(entries.contains(&"  Main Thread".to_string()));
-        assert!(entries.contains(&"  WT Thread {wt-feature-a}".to_string()));
+        assert!(entries.contains(&"  WT Thread {feature-a}".to_string()));
 
         let wt_thread_index = entries
             .iter()

@@ -1,6 +1,6 @@
 use crate::{
     CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
-    IconDecorationKind, prelude::*,
+    IconDecorationKind, Tooltip, prelude::*,
 };
 
 use gpui::{Animation, AnimationExt, AnyView, ClickEvent, Hsla, SharedString, pulsating_between};
@@ -32,6 +32,7 @@ pub struct ThreadItem {
     added: Option<usize>,
     removed: Option<usize>,
     worktree: Option<SharedString>,
+    worktree_path: Option<SharedString>,
     highlight_positions: Vec<usize>,
     worktree_highlight_positions: Vec<usize>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -58,6 +59,7 @@ impl ThreadItem {
             added: None,
             removed: None,
             worktree: None,
+            worktree_path: None,
             highlight_positions: Vec::new(),
             worktree_highlight_positions: Vec::new(),
             on_click: None,
@@ -124,6 +126,11 @@ impl ThreadItem {
 
     pub fn worktree(mut self, worktree: impl Into<SharedString>) -> Self {
         self.worktree = Some(worktree.into());
+        self
+    }
+
+    pub fn worktree_path(mut self, path: impl Into<SharedString>) -> Self {
+        self.worktree_path = Some(path.into());
         self
     }
 
@@ -264,6 +271,7 @@ impl RenderOnce for ThreadItem {
         let removed_count = self.removed.unwrap_or(0);
         let diff_stat_id = self.id.clone();
         let has_worktree = self.worktree.is_some();
+        let worktree_path = self.worktree_path;
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
