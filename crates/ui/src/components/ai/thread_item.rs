@@ -346,7 +346,7 @@ impl RenderOnce for ThreadItem {
                         .min_w_0()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
-                        .when_some(worktree_path, |this, path| {
+                        .when(worktree_path.is_some(), |this| {
                             this.child(
                                 div().child(
                                     Icon::new(IconName::GitBranch)
@@ -375,7 +375,9 @@ impl RenderOnce for ThreadItem {
                                     .color(Color::Muted),
                             )
                         })
-                        .tooltip(Tooltip::text(format!("Worktree: {}", path))),
+                        .when_some(worktree_path, |this, path| {
+                            this.tooltip(Tooltip::text(format!("Worktree: {}", path)))
+                        }),
                 )
             })
             .when(!has_worktree && (has_diff_stats || has_timestamp), |this| {
