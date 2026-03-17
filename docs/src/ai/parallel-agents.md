@@ -7,7 +7,7 @@ description: Run multiple AI agents in parallel across many projects in the same
 
 Zed supports running multiple agents in parallel across many projects at the same time. The Threads Panel organizes your running and historical threads by project, giving you a single view to monitor and switch between all of your active agent sessions. As usual in Zed, you can only have one project open at a time in any given window.
 
-## Threads Panel {#threads-panel}
+## Threads Sidebar {#threads-sidebar}
 
 The Threads Panel is the control center for your parallel agents. It displays a list of projects and the threads running inside each one, so you can see at a glance what every agent is working on. Each project appears as a collapsible group, with its threads listed underneath. Active threads show their current status, and you can click any thread to jump into it.
 
