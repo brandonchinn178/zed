@@ -4839,8 +4839,10 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "tempfile",
  "ui",
  "util",
+ "walkdir",
  "workspace",
  "worktree",
 ]

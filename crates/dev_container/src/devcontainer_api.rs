@@ -5,18 +5,28 @@ use std::{
     sync::Arc,
 };
 
+use futures::{TryFutureExt, future::err};
+use gpui::{AsyncWindowContext, Entity};
+use http::Request;
+use http_client::AsyncBody;
 use node_runtime::NodeRuntime;
+use project::Worktree;
 use serde::Deserialize;
-use settings::DevContainerConnection;
-use smol::fs;
+use settings::{DevContainerConnection, infer_json_indent_size, replace_value_in_json_text};
+use smol::fs::{self, File};
+use ui::Window;
 use util::command::Command;
 use util::rel_path::RelPath;
+use walkdir::WalkDir;
 use workspace::Workspace;
 use worktree::Snapshot;
 
 use crate::{
-    DevContainerContext, DevContainerFeature, DevContainerTemplate,
+    DevContainerContext, DevContainerErrorV2, DevContainerFeature, DevContainerTemplate,
+    TemplateEntry,
     devcontainer_json::DevContainer,
+    devcontainer_templates_repository, download_devcontainer_template_files, get_ghcr_token,
+    get_latest_feature_manifest, get_latest_manifest, get_latest_manifest_for_id, ghcr_url,
     model::{read_devcontainer_configuration, spawn_dev_container},
 };
 
@@ -60,6 +70,11 @@ pub(crate) struct DevContainerUp {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DevContainerApply {
     pub(crate) files: Vec<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct DevContainerApplyV2 {
+    pub(crate) project_files: Vec<Arc<RelPath>>,
 }
 
 // Keep around for posterity for now
@@ -550,6 +565,142 @@ pub(crate) async fn _read_devcontainer_configuration(
             Err(DevContainerError::DevContainerNotFound)
         }
     }
+}
+
+pub(crate) async fn apply_dev_container_template_v2(
+    worktree: Entity<Worktree>,
+    template: &DevContainerTemplate,
+    template_options: &HashMap<String, String>,
+    features_selected: &HashSet<DevContainerFeature>,
+    context: &DevContainerContext,
+    cx: &mut AsyncWindowContext,
+) -> Result<DevContainerApplyV2, DevContainerError> {
+    let token = get_ghcr_token(&context.http_client)
+        .map_err(|e| {
+            log::error!("TODO {e}");
+            DevContainerError::DevContainerCliNotAvailable
+        })
+        .await?;
+    let manifest = get_latest_manifest_for_id(&template.id, &token.token, &context.http_client)
+        .map_err(|e| {
+            log::error!("TODO {e}");
+            DevContainerError::DevContainerCliNotAvailable
+        })
+        .await?;
+    let id: &str = &template.id;
+    let token: &str = &token.token;
+    let blob_digest: &str = &manifest.layers[0].digest;
+    let client = &context.http_client;
+    let url = format!(
+        "{}/v2/{}/{}/blobs/{}",
+        ghcr_url(),
+        devcontainer_templates_repository(),
+        id,
+        blob_digest
+    );
+    dbg!(&url, token);
+    let request = Request::get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.oci.image.manifest.v1+json")
+        .body(AsyncBody::default())
+        .unwrap();
+    let temp_dir = tempfile::Builder::new().tempdir().unwrap();
+    let target_path = temp_dir.path().join("downloadme.tar");
+    let mut target_file = File::create(&target_path).await.unwrap();
+    let extracted = temp_dir.path().join("extracted");
+    std::fs::create_dir(&extracted).unwrap();
+    let Ok(mut response) = client.send(request).await else {
+        log::error!("Failed get reponse - TODO fix error handling");
+        return Err(DevContainerError::DevContainerCliNotAvailable); // TODO
+    };
+    smol::io::copy(response.body_mut(), &mut target_file)
+        .await
+        .unwrap();
+    let command_output = Command::new("tar")
+        .arg("-xvf")
+        .arg(&target_path)
+        .arg("-C")
+        .arg(&extracted)
+        .output()
+        .await
+        .unwrap();
+    dbg!(&command_output);
+    let extracted_location = &extracted.join(".devcontainer/");
+    let mut project_files = Vec::new();
+    for entry in WalkDir::new(extracted_location) {
+        let entry = entry.unwrap();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative_path = entry.path().strip_prefix(&extracted).unwrap();
+        let rel_path = RelPath::unix(relative_path).unwrap().into_arc();
+        let content = std::fs::read(entry.path()).unwrap();
+
+        let content_as_string = String::from_utf8(content).unwrap();
+        let mut content = expand_template_options(content_as_string, template_options);
+        if let Some("devcontainer.json") = &rel_path.file_name() {
+            content = insert_features_into_devcontainer_json(&content, features_selected)
+        }
+        worktree
+            .update(cx, |worktree, cx| {
+                worktree.create_entry(rel_path.clone(), false, Some(content.into_bytes()), cx)
+            })
+            .await
+            .unwrap();
+        project_files.push(rel_path);
+    }
+
+    dbg!(&extracted_location);
+
+    Ok(DevContainerApplyV2 { project_files })
+}
+
+// To improve:
+// - Unify the indentation
+// - remove/replace the commented-out features block that pre-exists
+fn insert_features_into_devcontainer_json(
+    content: &str,
+    features: &HashSet<DevContainerFeature>,
+) -> String {
+    if features.is_empty() {
+        return content.to_string();
+    }
+
+    // Build the features object: { "ghcr.io/devcontainers/features/node:1": {} }
+    let features_value: serde_json::Value = features
+        .iter()
+        .map(|f| {
+            let key = format!(
+                "{}/{}:{}",
+                f.source_repository.as_deref().unwrap_or(""),
+                f.id,
+                f.major_version()
+            );
+            (key, serde_json::Value::Object(Default::default()))
+        })
+        .collect::<serde_json::Map<String, serde_json::Value>>()
+        .into();
+
+    let tab_size = infer_json_indent_size(content);
+    let (range, replacement) = replace_value_in_json_text(
+        content,
+        &["features"],
+        tab_size,
+        Some(&features_value),
+        None,
+    );
+
+    let mut result = content.to_string();
+    result.replace_range(range, &replacement);
+    result
+}
+
+fn expand_template_options(content: String, template_options: &HashMap<String, String>) -> String {
+    let mut replaced_content = content;
+    for (key, val) in template_options {
+        replaced_content = replaced_content.replace(&format!("${{templateOption:{key}}}"), val)
+    }
+    replaced_content
 }
 
 // This will probably be the hardest

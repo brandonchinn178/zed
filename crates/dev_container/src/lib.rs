@@ -1,15 +1,20 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use fs::Fs;
 use gpui::AppContext;
+use gpui::AsyncWindowContext;
 use gpui::Entity;
 use gpui::Task;
 use http_client::anyhow;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::ProjectEnvironment;
+use project::Worktree;
 use settings::RegisterSetting;
 use settings::Settings;
+use smol::fs::File;
+use smol::process::Command;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -27,7 +32,9 @@ use ui::Tooltip;
 use ui::h_flex;
 use ui::rems_from_px;
 use ui::v_flex;
+use util::TryFutureExt;
 use util::shell::Shell;
+use walkdir::WalkDir;
 
 use gpui::{Action, DismissEvent, EventEmitter, FocusHandle, Focusable, RenderOnce, WeakEntity};
 use serde::Deserialize;
@@ -56,6 +63,7 @@ use devcontainer_api::read_default_devcontainer_configuration;
 
 use crate::devcontainer_api::DevContainerError;
 use crate::devcontainer_api::apply_dev_container_template;
+use crate::devcontainer_api::apply_dev_container_template_v2;
 
 pub use devcontainer_api::{
     DevContainerConfig, find_configs_in_snapshot, find_devcontainer_configs,
@@ -1589,33 +1597,24 @@ fn dispatch_apply_templates(
                 return;
             }
 
-            let files = match apply_dev_container_template(
+            let worktree = workspace.read_with(cx, |workspace, cx| {
+                workspace.project().read(cx).worktree_for_id(tree_id, cx)
+            });
+
+            let files = apply_dev_container_template_v2(
+                worktree.unwrap(),
                 &template_entry.template,
                 &template_entry.options_selected,
                 &template_entry.features_selected,
                 &context,
-                &cli,
+                cx,
             )
             .await
-            {
-                Ok(files) => files,
-                Err(e) => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.accept_message(
-                            DevContainerMessage::FailedToWriteTemplate(e),
-                            window,
-                            cx,
-                        );
-                    })
-                    .ok();
-                    return;
-                }
-            };
+            .unwrap();
 
-            if files
-                .files
-                .contains(&"./.devcontainer/devcontainer.json".to_string())
-            {
+            if files.project_files.contains(&Arc::from(
+                RelPath::unix(".devcontainer/devcontainer.json").unwrap(), // TOOD unwrap
+            )) {
                 let Some(workspace_task) = workspace
                     .update_in(cx, |workspace, window, cx| {
                         let Ok(path) = RelPath::unix(".devcontainer/devcontainer.json") else {
@@ -1710,6 +1709,21 @@ async fn get_latest_manifest(
     get_deserialized_response(token, &url, client).await
 }
 
+async fn get_latest_manifest_for_id(
+    id: &str,
+    token: &str,
+    client: &Arc<dyn HttpClient>,
+) -> Result<DockerManifestsResponse, String> {
+    let url = format!(
+        "{}/v2/{}/{}/manifests/latest",
+        ghcr_url(),
+        devcontainer_templates_repository(),
+        id
+    );
+    dbg!(&url, token);
+    get_deserialized_response(token, &url, client).await
+}
+
 async fn get_devcontainer_features(
     token: &str,
     blob_digest: &str,
@@ -1736,6 +1750,80 @@ async fn get_devcontainer_templates(
         blob_digest
     );
     get_deserialized_response(token, &url, client).await
+}
+
+pub(crate) async fn download_devcontainer_template_files(
+    id: &str,
+    token: &str,
+    blob_digest: &str,
+    client: &Arc<dyn HttpClient>,
+    worktree: Entity<Worktree>,
+    cx: &mut AsyncWindowContext,
+) -> Result<PathBuf, DevContainerErrorV2> {
+    let url = format!(
+        "{}/v2/{}/{}/blobs/{}",
+        ghcr_url(),
+        devcontainer_templates_repository(),
+        id,
+        blob_digest
+    );
+    dbg!(&url, token);
+    let request = Request::get(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/vnd.oci.image.manifest.v1+json")
+        .body(AsyncBody::default())
+        .unwrap();
+    // client.send(request).await.unwrap();
+
+    // Need to organize this code better
+    let temp_dir = tempfile::Builder::new().tempdir().unwrap();
+    let target_path = temp_dir.path().join("downloadme.tar");
+    let mut target_file = File::create(&target_path).await.unwrap();
+    let extracted = temp_dir.path().join("extracted");
+    std::fs::create_dir(&extracted).unwrap();
+    let Ok(mut response) = client.send(request).await else {
+        log::error!("Failed get reponse - TODO fix error handling");
+        return Err(DevContainerErrorV2::UnmappedError);
+    };
+
+    smol::io::copy(response.body_mut(), &mut target_file)
+        .await
+        .unwrap();
+
+    let command_output = Command::new("tar")
+        .arg("-xvf")
+        .arg(&target_path)
+        .arg("-C")
+        .arg(&extracted)
+        .output()
+        .await
+        .unwrap();
+
+    dbg!(&command_output);
+
+    // let Ok(_) = comm
+
+    let extracted_location = &extracted.join(".devcontainer/");
+
+    for entry in WalkDir::new(extracted_location) {
+        let entry = entry.unwrap();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative_path = entry.path().strip_prefix(&extracted).unwrap();
+        let rel_path = RelPath::unix(relative_path).unwrap().into_arc();
+        let content = std::fs::read(entry.path()).unwrap();
+
+        worktree
+            .update(cx, |worktree, cx| {
+                worktree.create_entry(rel_path, false, Some(content), cx)
+            })
+            .unwrap();
+    }
+
+    dbg!(&extracted_location);
+
+    Ok(extracted_location.clone())
 }
 
 async fn get_deserialized_response<T>(
