@@ -873,13 +873,14 @@ fn test_expand_excerpts(cx: &mut App) {
     drop(snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
-        let line_zero = multibuffer.snapshot(cx).anchor_before(Point::new(0, 0));
-
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
+        let line_zero = multibuffer_snapshot.anchor_before(Point::new(0, 0));
         multibuffer.expand_excerpts(
-            multibuffer
-                .snapshot(cx)
-                .excerpts()
-                .map(|excerpt| excerpt.multibuffer_range().start),
+            multibuffer.snapshot(cx).excerpts().map(|excerpt| {
+                multibuffer_snapshot
+                    .buffer_anchor_to_anchor(excerpt.context.start)
+                    .unwrap()
+            }),
             1,
             ExpandExcerptDirection::UpAndDown,
             cx,
@@ -5175,7 +5176,7 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
     );
     assert_eq!(ranges_half_open[0].1, BufferOffset(0)..BufferOffset(7));
     assert_eq!(
-        ranges_half_open[0].0.buffer_id,
+        ranges_half_open[0].0.remote_id(),
         buffer_1.read(cx).remote_id()
     );
 
@@ -5210,7 +5211,6 @@ fn test_range_to_buffer_ranges(cx: &mut App) {
     let max_point = snapshot_trailing.max_point();
 
     let ranges_half_open_max = snapshot_trailing.range_to_buffer_ranges(Point::zero()..max_point);
-    dbg!(&ranges_half_open_max);
     assert_eq!(
         ranges_half_open_max.len(),
         2,

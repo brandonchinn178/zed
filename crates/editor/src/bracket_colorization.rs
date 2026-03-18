@@ -9,7 +9,7 @@ use collections::HashMap;
 use gpui::{Context, HighlightStyle};
 use language::language_settings;
 use multi_buffer::Anchor;
-use text::ToOffset as _;
+use text::{OffsetRangeExt as _, ToOffset as _};
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 impl Editor {
@@ -27,7 +27,7 @@ impl Editor {
 
         let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (buffer, _, buffer_range, excerpt)| {
+            |mut acc, (buffer, _, buffer_range)| {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
@@ -41,11 +41,15 @@ impl Editor {
                         .entry(buffer_snapshot.remote_id())
                         .or_default();
 
+                    let Some((_, excerpt)) = multi_buffer_snapshot.excerpt_for_buffer_position(
+                        buffer_snapshot.anchor_after(buffer_range.start),
+                    ) else {
+                        return acc;
+                    };
+                    let context = excerpt.context.to_offset(&buffer_snapshot);
+
                     let brackets_by_accent = buffer_snapshot
-                        .fetch_bracket_ranges(
-                            buffer_range.start..buffer_range.end,
-                            Some(fetched_chunks),
-                        )
+                        .fetch_bracket_ranges(buffer_range.clone(), Some(fetched_chunks))
                         .into_iter()
                         .flat_map(|(chunk_range, pairs)| {
                             if fetched_chunks.insert(chunk_range) {
@@ -57,26 +61,22 @@ impl Editor {
                         .filter_map(|pair| {
                             let color_index = pair.color_index?;
 
-                            let context_start =
-                                excerpt.range.context.start.to_offset(&buffer_snapshot);
-                            let context_end = excerpt.range.context.end.to_offset(&buffer_snapshot);
-
-                            let buffer_open_range = if context_start <= pair.open_range.start
-                                && pair.open_range.end <= context_end
+                            let buffer_open_range = if context.start <= pair.open_range.start
+                                && pair.open_range.end <= context.end
                             {
-                                Some(excerpt.anchor_range(
+                                multi_buffer_snapshot.anchor_range_in_buffer_unchecked(
                                     buffer_snapshot.anchor_range_inside(pair.open_range),
-                                ))
+                                )
                             } else {
                                 None
                             };
 
-                            let buffer_close_range = if context_start <= pair.close_range.start
-                                && pair.close_range.end <= context_end
+                            let buffer_close_range = if context.start <= pair.close_range.start
+                                && pair.close_range.end <= context.end
                             {
-                                Some(excerpt.anchor_range(
+                                multi_buffer_snapshot.anchor_range_in_buffer_unchecked(
                                     buffer_snapshot.anchor_range_inside(pair.close_range),
-                                ))
+                                )
                             } else {
                                 None
                             };

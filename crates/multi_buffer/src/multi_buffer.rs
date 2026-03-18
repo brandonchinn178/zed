@@ -3694,13 +3694,13 @@ impl MultiBufferSnapshot {
     pub fn range_to_buffer_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Vec<(ExcerptInfo, Range<BufferOffset>)> {
+    ) -> Vec<(BufferSnapshot, Range<BufferOffset>)> {
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         cursor.seek(&start);
 
-        let mut result: Vec<(ExcerptInfo, Range<BufferOffset>)> = Vec::new();
+        let mut result: Vec<(BufferSnapshot, Range<BufferOffset>)> = Vec::new();
         while let Some(region) = cursor.region() {
             if region.range.start >= end {
                 break;
@@ -3717,12 +3717,12 @@ impl MultiBufferSnapshot {
                     .buffer_range
                     .end
                     .min(region.buffer_range.start + end_overshoot);
-                if let Some(prev) = result.last_mut().filter(|(prev_excerpt, prev_range)| {
-                    prev_excerpt == &region.excerpt.info() && prev_range.end == start
+                if let Some(prev) = result.last_mut().filter(|(prev_buffer, prev_range)| {
+                    prev_buffer.remote_id() == region.buffer.remote_id() && prev_range.end == start
                 }) {
                     prev.1.end = end;
                 } else {
-                    result.push((region.excerpt.info(), start..end));
+                    result.push((region.buffer.clone(), start..end));
                 }
             }
             cursor.next();
@@ -3737,10 +3737,11 @@ impl MultiBufferSnapshot {
 
             let buffer_offset =
                 BufferOffset(excerpt.range.context.start.to_offset(buffer_snapshot));
-            if result.last_mut().is_none_or(|(prev_excerpt, prev_range)| {
-                prev_excerpt != &excerpt.info() || prev_range.end != buffer_offset
+            if result.last_mut().is_none_or(|(prev_buffer, prev_range)| {
+                prev_buffer.remote_id() != buffer_snapshot.remote_id()
+                    || prev_range.end != buffer_offset
             }) {
-                result.push((excerpt.info(), buffer_offset..buffer_offset));
+                result.push((buffer_snapshot.clone(), buffer_offset..buffer_offset));
             }
         }
 
@@ -6574,9 +6575,9 @@ impl MultiBufferSnapshot {
             .flat_map(|range| {
                 self.range_to_buffer_ranges(range)
                     .into_iter()
-                    .map(|(excerpt, range)| {
-                        excerpt.buffer_snapshot(self).anchor_after(range.start)
-                            ..excerpt.buffer_snapshot(self).anchor_before(range.end)
+                    .map(|(buffer_snapshot, range)| {
+                        buffer_snapshot.anchor_after(range.start)
+                            ..buffer_snapshot.anchor_before(range.end)
                     })
             })
             .collect();
@@ -6721,6 +6722,13 @@ impl MultiBufferSnapshot {
         head: Anchor,
     ) -> Option<(&BufferSnapshot, ExcerptRange<text::Anchor>)> {
         self.excerpt_containing2(head..head)
+    }
+
+    pub fn excerpt_for_buffer_position(
+        &self,
+        start: text::Anchor,
+    ) -> Option<(&BufferSnapshot, ExcerptRange<text::Anchor>)> {
+        todo!()
     }
 
     /// Returns all nonempty intersections of the given buffer range with excerpts in the multibuffer in order

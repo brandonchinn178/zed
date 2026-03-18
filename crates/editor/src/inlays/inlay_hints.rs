@@ -350,7 +350,7 @@ impl Editor {
             .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
-        for (buffer, buffer_version, visible_range, _) in visible_excerpts {
+        for (buffer, buffer_version, visible_range) in visible_excerpts {
             let buffer_id = buffer.read(cx).remote_id();
 
             if !self.registered_buffers.contains_key(&buffer_id) {
@@ -2255,7 +2255,7 @@ pub mod tests {
             1,
             "Single buffer should produce a single excerpt with visible range"
         );
-        let (excerpt_buffer, _, excerpt_visible_range, _) = ranges.into_iter().next().unwrap();
+        let (excerpt_buffer, _, excerpt_visible_range) = ranges.into_iter().next().unwrap();
         excerpt_buffer.read_with(cx, |buffer, _| {
             excerpt_visible_range.to_point(&buffer.snapshot())
         })

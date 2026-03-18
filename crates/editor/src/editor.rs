@@ -5767,7 +5767,7 @@ impl Editor {
         &self,
         lsp_related_only: bool,
         cx: &mut Context<Editor>,
-    ) -> Vec<(Entity<Buffer>, clock::Global, Range<usize>, ExcerptInfo)> {
+    ) -> Vec<(Entity<Buffer>, clock::Global, Range<usize>)> {
         let project = self.project().cloned();
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let multi_buffer = self.buffer().read(cx);
@@ -5786,15 +5786,13 @@ impl Editor {
             .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
             .into_iter()
             .filter(|(_, excerpt_visible_range)| !excerpt_visible_range.is_empty())
-            .filter_map(|(excerpt, excerpt_visible_range)| {
-                let buffer = excerpt.buffer_snapshot(&multi_buffer_snapshot);
-                let buffer_entity = excerpt.buffer(multi_buffer);
+            .filter_map(|(buffer, excerpt_visible_range)| {
+                let buffer_entity = multi_buffer.buffer(buffer.remote_id())?;
                 if !lsp_related_only {
                     return Some((
                         buffer_entity,
                         buffer.version().clone(),
                         excerpt_visible_range.start.0..excerpt_visible_range.end.0,
-                        excerpt,
                     ));
                 }
 
@@ -5811,7 +5809,6 @@ impl Editor {
                         buffer_entity,
                         buffer.version().clone(),
                         excerpt_visible_range.start.0..excerpt_visible_range.end.0,
-                        excerpt,
                     ))
                 }
             })
