@@ -27,7 +27,10 @@ use project::{
         RepositoryEvent, RepositoryId,
     },
 };
-use search::{SearchOption, SearchOptions, SearchSource, ToggleCaseSensitive};
+use search::{
+    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive,
+};
 use settings::Settings;
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -1565,10 +1568,19 @@ impl GitGraph {
                 h_flex()
                     .min_w_64()
                     .gap_1()
-                    .child(
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
                         IconButton::new("git-graph-search-prev", IconName::ChevronLeft)
                             .shape(ui::IconButtonShape::Square)
                             .icon_size(IconSize::Small)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Select Previous Match",
+                                    &SelectPreviousMatch,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
                             .map(|this| {
                                 if self.search_state.matches.is_empty() {
                                     this.disabled(true)
@@ -1577,12 +1589,21 @@ impl GitGraph {
                                         this.select_previous_match(cx);
                                     }))
                                 }
-                            }),
-                    )
-                    .child(
+                            })
+                    })
+                    .child({
+                        let focus_handle = self.focus_handle.clone();
                         IconButton::new("git-graph-search-next", IconName::ChevronRight)
                             .shape(ui::IconButtonShape::Square)
                             .icon_size(IconSize::Small)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Select Next Match",
+                                    &SelectNextMatch,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
                             .map(|this| {
                                 if self.search_state.matches.is_empty() {
                                     this.disabled(true)
@@ -1591,8 +1612,8 @@ impl GitGraph {
                                         this.select_next_match(cx);
                                     }))
                                 }
-                            }),
-                    )
+                            })
+                    })
                     .child(
                         Label::new(format!(
                             "{}/{}",
@@ -2574,6 +2595,12 @@ impl Render for GitGraph {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(|this, _: &SelectNextMatch, _window, cx| {
+                this.select_next_match(cx);
+            }))
+            .on_action(cx.listener(|this, _: &SelectPreviousMatch, _window, cx| {
+                this.select_previous_match(cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleCaseSensitive, _window, cx| {
                 this.search_state.case_sensitive = !this.search_state.case_sensitive;
                 this.search_state.state.next_state();
