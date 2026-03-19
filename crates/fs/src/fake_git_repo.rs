@@ -1010,7 +1010,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _log_source: LogSource,
         _search_args: SearchCommitArgs,
-        _request_tx: Sender<Vec<Oid>>,
+        _request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         async { bail!("search_commits not supported for FakeGitRepository") }.boxed()
     }

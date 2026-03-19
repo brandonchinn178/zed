@@ -3938,7 +3938,8 @@ impl Repository {
             active_jobs: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            graph_commit_data_handler: GraphCommitHandlerState::Closed,        }
+            graph_commit_data_handler: GraphCommitHandlerState::Closed,
+        }
     }
 
     fn remote(
@@ -4555,7 +4556,7 @@ impl Repository {
         &mut self,
         log_source: LogSource,
         search_args: SearchCommitArgs,
-        request_tx: smol::channel::Sender<Vec<Oid>>,
+        request_tx: smol::channel::Sender<Oid>,
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();

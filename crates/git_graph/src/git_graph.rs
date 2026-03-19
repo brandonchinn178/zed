@@ -1324,7 +1324,7 @@ impl GitGraph {
         self.search_state.matches.clear();
         self.search_state.selected_index = None;
 
-        let (request_tx, request_rx) = smol::channel::unbounded::<Vec<Oid>>();
+        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
 
         repo.update(cx, |repo, cx| {
             repo.search_commits(
@@ -1339,21 +1339,14 @@ impl GitGraph {
         });
 
         let search_task = cx.spawn(async move |this, cx| {
-            while let Ok(oids) = request_rx.recv().await {
-                if oids.is_empty() {
-                    // todo! maybe a debug panic here
-                    continue;
-                }
-
+            while let Ok(oid) = request_rx.recv().await {
                 this.update(cx, |this, cx| {
-                    if let Some(oid) = oids.first()
-                        && this.search_state.selected_index.is_none()
-                    {
+                    if this.search_state.selected_index.is_none() {
                         this.search_state.selected_index = Some(0);
-                        this.select_commit_by_sha(*oid, cx);
+                        this.select_commit_by_sha(oid, cx);
                     }
 
-                    this.search_state.matches.extend(oids);
+                    this.search_state.matches.insert(oid);
                     cx.notify();
                 })
                 .ok();

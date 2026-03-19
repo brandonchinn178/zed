@@ -52,8 +52,7 @@ static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 
 /// Used to get commits that match with a search
 /// %H - Full commit hash
-/// %x00 - Null byte separator, used to split up commit data
-static SEARCH_COMMIT_FORMAT: &str = "--format=%H%x00";
+static SEARCH_COMMIT_FORMAT: &str = "--format=%H";
 
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
@@ -999,7 +998,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         log_source: LogSource,
         search_args: SearchCommitArgs,
-        request_tx: Sender<Vec<Oid>>,
+        request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>>;
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
@@ -2831,7 +2830,7 @@ impl GitRepository for RealGitRepository {
         &self,
         log_source: LogSource,
         search_args: SearchCommitArgs,
-        request_tx: Sender<Vec<Oid>>,
+        request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
 
@@ -2867,15 +2866,11 @@ impl GitRepository for RealGitRepository {
                     break;
                 }
 
-                // todo! fix this, we are getting new lines here
-                let parts = line_buffer.split('\x00');
-                let commits = parts
-                    .into_iter()
-                    .filter_map(|sha| Oid::from_str(sha).ok())
-                    .collect::<Vec<_>>();
+                let sha = line_buffer.trim_end_matches('\n');
 
-                // todo! buffer commit ids to not notify for every result
-                if commits.is_empty() || request_tx.send(commits).await.is_err() {
+                if let Ok(oid) = Oid::from_str(sha)
+                    && request_tx.send(oid).await.is_err()
+                {
                     break;
                 }
             }
