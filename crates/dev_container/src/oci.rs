@@ -6,7 +6,7 @@ use http::Request;
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
 
-use crate::DevContainerErrorV2;
+use crate::devcontainer_api::DevContainerError;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,7 +99,7 @@ pub(crate) async fn download_oci_tarball(
     client: &Arc<dyn HttpClient>,
     fs: &Arc<dyn Fs>,
     id: Option<&str>,
-) -> Result<(), DevContainerErrorV2> {
+) -> Result<(), DevContainerError> {
     let url = match id {
         Some(id) => format!("https://{registry}/v2/{repository_path}/{id}/blobs/{blob_digest}"),
         None => format!("https://{registry}/v2/{repository_path}/blobs/{blob_digest}"),
@@ -111,13 +111,13 @@ pub(crate) async fn download_oci_tarball(
         .body(AsyncBody::default())
         .map_err(|e| {
             log::error!("Failed to create blob request: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::ResourceFetchFailed
         })?;
 
     let mut response = client.send(request).await.map_err(|e| {
         log::error!("Failed to download feature blob: {e}");
         dbg!(&e);
-        DevContainerErrorV2::UnmappedError
+        DevContainerError::ResourceFetchFailed
     })?;
     let status = response.status();
 
@@ -130,7 +130,7 @@ pub(crate) async fn download_oci_tarball(
             status.as_u16(),
             body_text,
         );
-        return Err(DevContainerErrorV2::UnmappedError);
+        return Err(DevContainerError::ResourceFetchFailed);
     }
 
     futures::pin_mut!(body);
@@ -139,13 +139,8 @@ pub(crate) async fn download_oci_tarball(
     fs.extract_tar_file(dest_dir, archive).await.map_err(|e| {
         dbg!(&e);
         log::error!("Failed to extract feature tarball: {e}");
-        DevContainerErrorV2::UnmappedError
+        DevContainerError::FilesystemError
     })?;
-    // archive.unpack(dest_dir).await.map_err(|e| {
-    //     dbg!(&e);
-    //     log::error!("Failed to extract feature tarball: {e}");
-    //     DevContainerErrorV2::UnmappedError
-    // })?;
 
     Ok(())
 }

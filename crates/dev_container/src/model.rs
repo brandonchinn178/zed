@@ -13,9 +13,9 @@ use smol::process::Command;
 use util::ResultExt;
 
 use crate::{
-    DevContainerConfig, DevContainerContext, DevContainerErrorV2,
+    DevContainerConfig, DevContainerContext,
     command_json::evaluate_json_command,
-    devcontainer_api::DevContainerUp,
+    devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
         DevContainer, DevContainerBuildType, FeatureOptions, MountDefinition,
         deserialize_devcontainer_json,
@@ -65,7 +65,7 @@ impl DevContainerManifest {
         environment: HashMap<String, String>,
         local_config: DevContainerConfig,
         local_project_path: Arc<&Path>,
-    ) -> Result<Self, DevContainerErrorV2> {
+    ) -> Result<Self, DevContainerError> {
         let config_path = local_project_path.join(local_config.config_path.clone());
         log::info!("parsing devcontainer json found in {:?}", &config_path);
         // SO basically everywhere we read_to_string, we want to do it with appropriate variable substitution
@@ -73,21 +73,21 @@ impl DevContainerManifest {
         // Actually ok - so the spec says _only_ the devcontainer.json file can have this substitution. That makes things a bit easier
         let devcontainer_contents = fs.load(&config_path).await.map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::DevContainerParseFailed
         })?;
 
         let devcontainer = deserialize_devcontainer_json(&devcontainer_contents)?;
 
         let devcontainer_directory = config_path.parent().ok_or_else(|| {
             log::error!("Dev container file should be in a directory");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::NotInValidProject
         })?;
         let file_name = config_path
             .file_name()
             .and_then(|f| f.to_str())
             .ok_or_else(|| {
                 log::error!("Dev container file has no file name, or is invalid unicode");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::DevContainerParseFailed
             })?;
 
         Ok(Self {
@@ -132,7 +132,7 @@ impl DevContainerManifest {
         labels
     }
 
-    fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerErrorV2> {
+    fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
         let mut replaced_content = self
             .raw_config
             .replace("${devcontainerId}", &self.devcontainer_id())
@@ -171,7 +171,7 @@ impl DevContainerManifest {
     // type of the docker inspect Env is, and spit out a hashmap
     fn _replace_remote_env_vars(&mut self) {}
 
-    fn validate_config(&self) -> Result<(), DevContainerErrorV2> {
+    fn validate_config(&self) -> Result<(), DevContainerError> {
         // TODO
         Ok(())
     }
@@ -231,7 +231,7 @@ impl DevContainerManifest {
     /// - The image sourced in the docker-compose main service, if one is specified
     /// - The image sourced in the docker-compose main service dockerfile, if one is specified
     /// If no such image is available, return an error
-    async fn get_base_image_from_config(&self) -> Result<String, DevContainerErrorV2> {
+    async fn get_base_image_from_config(&self) -> Result<String, DevContainerError> {
         if let Some(image) = &self.dev_container().image {
             return Ok(image.to_string());
         }
@@ -242,7 +242,7 @@ impl DevContainerManifest {
                 .await
                 .map_err(|e| {
                     log::error!("Error reading dockerfile: {e}");
-                    DevContainerErrorV2::UnmappedError
+                    DevContainerError::DevContainerParseFailed
                 })?;
             return image_from_dockerfile(self, dockerfile_contents);
         }
@@ -261,7 +261,7 @@ impl DevContainerManifest {
                     .await
                     .map_err(|e| {
                         log::error!("Error reading dockerfile: {e}");
-                        DevContainerErrorV2::UnmappedError
+                        DevContainerError::DevContainerParseFailed
                     })?;
                 return image_from_dockerfile(self, dockerfile_contents);
             }
@@ -270,21 +270,19 @@ impl DevContainerManifest {
             }
 
             log::error!("No valid base image found in docker-compose configuration");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         }
         log::error!("No valid base image found in dev container configuration");
-        Err(DevContainerErrorV2::UnmappedError)
+        Err(DevContainerError::DevContainerParseFailed)
     }
 
-    async fn download_feature_and_dockerfile_resources(
-        &mut self,
-    ) -> Result<(), DevContainerErrorV2> {
+    async fn download_feature_and_dockerfile_resources(&mut self) -> Result<(), DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
                 log::error!(
                     "Dev container has not yet been parsed for variable expansion. Cannot yet download resources"
                 );
-                return Err(DevContainerErrorV2::UnmappedError);
+                return Err(DevContainerError::DevContainerParseFailed);
             }
             ConfigStatus::VariableParsed(dev_container) => dev_container,
         };
@@ -314,12 +312,12 @@ impl DevContainerManifest {
             .await
             .map_err(|e| {
                 log::error!("Failed to create features content dir: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::FilesystemError
             })?;
 
         self.fs.create_dir(&empty_context_dir).await.map_err(|e| {
             log::error!("Failed to create empty context dir: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::FilesystemError
         })?;
 
         let dockerfile_path = features_content_dir.join("Dockerfile.extended");
@@ -357,7 +355,7 @@ impl DevContainerManifest {
             .await
             .map_err(|e| {
                 log::error!("Failed to write builtin env file: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::FilesystemError
             })?;
 
         let ordered_features =
@@ -383,7 +381,7 @@ impl DevContainerManifest {
                     "Failed to create feature directory for {}: {e}",
                     feature_ref
                 );
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::FilesystemError
             })?;
 
             // --- Download the feature's OCI tarball first, so we can read
@@ -394,14 +392,14 @@ impl DevContainerManifest {
                     "Feature '{}' is not a supported OCI feature reference",
                     feature_ref
                 );
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::DevContainerParseFailed
             })?;
             let TokenResponse { token } =
                 get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
                     .await
                     .map_err(|e| {
                         log::error!("Failed to get OCI token for feature '{}': {e}", feature_ref);
-                        DevContainerErrorV2::UnmappedError
+                        DevContainerError::ResourceFetchFailed
                     })?;
             let manifest = get_oci_manifest(
                 &oci_ref.registry,
@@ -417,7 +415,7 @@ impl DevContainerManifest {
                     "Failed to fetch OCI manifest for feature '{}': {e}",
                     feature_ref
                 );
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::ResourceFetchFailed
             })?;
             let digest = &manifest
                 .layers
@@ -427,7 +425,7 @@ impl DevContainerManifest {
                         "OCI manifest for feature '{}' contains no layers",
                         feature_ref
                     );
-                    DevContainerErrorV2::UnmappedError
+                    DevContainerError::ResourceFetchFailed
                 })?
                 .digest;
             download_oci_tarball(
@@ -450,18 +448,18 @@ impl DevContainerManifest {
                     feature_json_path
                 );
                 log::error!("{}", &message);
-                return Err(DevContainerErrorV2::UnmappedError);
+                return Err(DevContainerError::ResourceFetchFailed);
             }
 
             let contents = self.fs.load(&feature_json_path).await.map_err(|e| {
                 log::error!("error reading devcontainer-feature.json: {:?}", e);
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::FilesystemError
             })?;
 
             let feature_json: DevContainerFeatureJson = serde_json_lenient::from_str(&contents)
                 .map_err(|e| {
                     log::error!("Failed to parse devcontainer-feature.json: {e}");
-                    DevContainerErrorV2::UnmappedError
+                    DevContainerError::ResourceFetchFailed
                 })?;
 
             let feature_manifest = FeatureManifest::new(feature_dir, feature_json);
@@ -484,7 +482,7 @@ impl DevContainerManifest {
                 .await
                 .map_err(|e| {
                     log::error!("Failed to write install wrapper for {}: {e}", feature_ref);
-                    DevContainerErrorV2::UnmappedError
+                    DevContainerError::FilesystemError
                 })?;
 
             feature_layers.push_str(&generate_feature_layer(&consecutive_id));
@@ -510,7 +508,7 @@ impl DevContainerManifest {
             .await
             .map_err(|e| {
                 log::error!("Failed to write Dockerfile.extended: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::FilesystemError
             })?;
 
         log::info!(
@@ -528,13 +526,13 @@ impl DevContainerManifest {
     fn build_merged_resources(
         &self,
         base_image: DockerInspect,
-    ) -> Result<DockerBuildResources, DevContainerErrorV2> {
+    ) -> Result<DockerBuildResources, DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
                 log::error!(
                     "Dev container has not yet been parsed for variable expansion. Cannot yet merge resources"
                 );
-                return Err(DevContainerErrorV2::UnmappedError);
+                return Err(DevContainerError::DevContainerParseFailed);
             }
             ConfigStatus::VariableParsed(dev_container) => dev_container,
         };
@@ -565,7 +563,7 @@ impl DevContainerManifest {
         })
     }
 
-    async fn build_resources(&self) -> Result<DevContainerBuildResources, DevContainerErrorV2> {
+    async fn build_resources(&self) -> Result<DevContainerBuildResources, DevContainerError> {
         // TODO this probably shouldn't proceed until parsed either
         let dev_container = self.dev_container();
         match dev_container.build_type() {
@@ -584,7 +582,7 @@ impl DevContainerManifest {
                 ));
             }
             DevContainerBuildType::None => {
-                return Err(DevContainerErrorV2::UnmappedError);
+                return Err(DevContainerError::DevContainerParseFailed);
             }
         }
     }
@@ -592,12 +590,12 @@ impl DevContainerManifest {
     async fn run_dev_container(
         &self,
         build_resources: DevContainerBuildResources,
-    ) -> Result<DevContainerUp, DevContainerErrorV2> {
+    ) -> Result<DevContainerUp, DevContainerError> {
         let ConfigStatus::VariableParsed(_) = &self.config else {
             log::error!(
                 "Variables have not been parsed; cannot proceed with running the dev container"
             );
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         let running_container = match build_resources {
             DevContainerBuildResources::DockerCompose(resources) => {
@@ -627,24 +625,24 @@ impl DevContainerManifest {
     }
 
     // TODO this could be done earlier in the process
-    async fn docker_compose_manifest(&self) -> Result<DockerComposeResources, DevContainerErrorV2> {
+    async fn docker_compose_manifest(&self) -> Result<DockerComposeResources, DevContainerError> {
         // TODO this probably shouldn't proceed until parsed either
         let dev_container = self.dev_container();
         let Some(docker_compose_files) = dev_container.docker_compose_file.clone() else {
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         let docker_compose_full_paths = docker_compose_files
             .iter()
             .map(|relative| self.config_directory.join(relative))
             .collect::<Vec<PathBuf>>();
         let docker_compose_config_command =
-            create_docker_compose_config_command(&docker_compose_full_paths)?;
+            create_docker_compose_config_command(&docker_compose_full_paths);
 
         let Some(config) =
             evaluate_json_command::<DockerComposeConfig>(docker_compose_config_command).await?
         else {
             log::error!("Output could not deserialize into DockerComposeConfig");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         Ok(DockerComposeResources {
             files: docker_compose_full_paths,
@@ -654,7 +652,7 @@ impl DevContainerManifest {
 
     async fn build_and_extend_compose_files(
         &self,
-    ) -> Result<DockerComposeResources, DevContainerErrorV2> {
+    ) -> Result<DockerComposeResources, DevContainerError> {
         // TODO this probably shouldn't proceed until parsed either
         let dev_container = self.dev_container();
 
@@ -662,7 +660,7 @@ impl DevContainerManifest {
             log::error!(
                 "Cannot build and extend compose files: features build info is not yet constructed"
             );
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         let mut docker_compose_resources = self.docker_compose_manifest().await?;
 
@@ -718,7 +716,7 @@ impl DevContainerManifest {
 
                 let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
                     log::error!("Error serializing docker compose runtime override: {e}");
-                    DevContainerErrorV2::UnmappedError
+                    DevContainerError::DevContainerParseFailed
                 })?;
 
                 self.fs
@@ -726,7 +724,7 @@ impl DevContainerManifest {
                     .await
                     .map_err(|e| {
                         log::error!("Error writing the runtime override file: {e}");
-                        DevContainerErrorV2::UnmappedError
+                        DevContainerError::FilesystemError
                     })?;
 
                 docker_compose_resources.files.push(config_location);
@@ -786,7 +784,7 @@ impl DevContainerManifest {
 
             let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
                 log::error!("Error serializing docker compose runtime override: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::DevContainerParseFailed
             })?;
 
             self.fs
@@ -794,7 +792,7 @@ impl DevContainerManifest {
                 .await
                 .map_err(|e| {
                     log::error!("Error writing the runtime override file: {e}");
-                    DevContainerErrorV2::UnmappedError
+                    DevContainerError::FilesystemError
                 })?;
 
             docker_compose_resources.files.push(config_location);
@@ -804,7 +802,7 @@ impl DevContainerManifest {
             inspect_image(&features_build_info.image_tag).await?
         } else {
             log::error!("Docker compose must have either image or dockerfile defined");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
 
         let resources = self.build_merged_resources(built_service_image)?;
@@ -824,14 +822,14 @@ impl DevContainerManifest {
         &self,
         main_service_name: &str,
         resources: DockerBuildResources,
-    ) -> Result<PathBuf, DevContainerErrorV2> {
+    ) -> Result<PathBuf, DevContainerError> {
         let config = self.build_runtime_override(main_service_name, resources)?;
         let temp_base = std::env::temp_dir().join("devcontainer-zed");
         let config_location = temp_base.join("docker_compose_runtime.json");
 
         let config_json = serde_json_lenient::to_string(&config).map_err(|e| {
             log::error!("Error serializing docker compose runtime override: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::DevContainerParseFailed
         })?;
 
         self.fs
@@ -839,7 +837,7 @@ impl DevContainerManifest {
             .await
             .map_err(|e| {
                 log::error!("Error writing the runtime override file: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::FilesystemError
             })?;
 
         Ok(config_location)
@@ -849,13 +847,13 @@ impl DevContainerManifest {
         &self,
         main_service_name: &str,
         resources: DockerBuildResources,
-    ) -> Result<DockerComposeConfig, DevContainerErrorV2> {
+    ) -> Result<DockerComposeConfig, DevContainerError> {
         let mut runtime_labels = vec![];
 
         if let Some(metadata) = &resources.image.config.labels.metadata {
             let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
                 log::error!("Error serializing docker image metadata: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::ContainerNotValid(resources.image.id.clone())
             })?;
 
             runtime_labels.push(format!(
@@ -947,14 +945,14 @@ impl DevContainerManifest {
         Ok(new_docker_compose_config)
     }
 
-    async fn build_docker_image(&self) -> Result<DockerInspect, DevContainerErrorV2> {
+    async fn build_docker_image(&self) -> Result<DockerInspect, DevContainerError> {
         // TODO this probably shouldn't proceed until parsed either
         let dev_container = self.dev_container();
 
         match dev_container.build_type() {
             DevContainerBuildType::Image => {
                 let Some(image_tag) = &dev_container.image else {
-                    return Err(DevContainerErrorV2::UnmappedError);
+                    return Err(DevContainerError::DevContainerParseFailed);
                 };
                 let base_image = inspect_image(image_tag).await?;
                 if dev_container
@@ -967,9 +965,8 @@ impl DevContainerManifest {
                 }
             }
             DevContainerBuildType::Dockerfile => {}
-            DevContainerBuildType::DockerCompose => todo!("not yet implemented"),
-            DevContainerBuildType::None => {
-                return Err(DevContainerErrorV2::UnmappedError);
+            DevContainerBuildType::DockerCompose | DevContainerBuildType::None => {
+                return Err(DevContainerError::DevContainerParseFailed);
             }
         };
 
@@ -977,26 +974,28 @@ impl DevContainerManifest {
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error building docker image: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
         })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("docker buildx build failed: {stderr}");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
         }
 
         // After a successful build, inspect the newly tagged image to get its metadata
         let Some(features_build_info) = &self.features_build_info else {
             log::error!("Features build info expected, but not created");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         let image = inspect_image(&features_build_info.image_tag).await?;
 
         Ok(image)
     }
 
-    fn create_docker_build(&self) -> Result<Command, DevContainerErrorV2> {
+    fn create_docker_build(&self) -> Result<Command, DevContainerError> {
         // TODO this probably shouldn't proceed until parsed either
         let dev_container = self.dev_container();
 
@@ -1004,7 +1003,7 @@ impl DevContainerManifest {
             log::error!(
                 "Cannot create docker build command; features build info has not been constructed"
             );
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         let mut command = smol::process::Command::new(docker_cli());
 
@@ -1084,7 +1083,7 @@ impl DevContainerManifest {
     async fn run_docker_compose(
         &self,
         resources: DockerComposeResources,
-    ) -> Result<DockerInspect, DevContainerErrorV2> {
+    ) -> Result<DockerInspect, DevContainerError> {
         let mut command = Command::new(docker_cli());
         // TODO project name how
         command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
@@ -1097,13 +1096,15 @@ impl DevContainerManifest {
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error running docker compose up: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
         })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from docker compose up: {}", stderr);
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
         }
 
         if let Some(docker_ps) = check_for_existing_container(&self.identifying_labels()).await? {
@@ -1113,31 +1114,33 @@ impl DevContainerManifest {
 
         log::error!("Could not find existing container after docker compose up");
 
-        Err(DevContainerErrorV2::UnmappedError)
+        Err(DevContainerError::DevContainerParseFailed)
     }
 
     async fn run_docker_image(
         &self,
         build_resources: DockerBuildResources,
-    ) -> Result<DockerInspect, DevContainerErrorV2> {
+    ) -> Result<DockerInspect, DevContainerError> {
         let mut docker_run_command = self.create_docker_run_command(build_resources)?;
 
         let output = docker_run_command.output().await.map_err(|e| {
             log::error!("Error running docker run: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::CommandFailed(docker_run_command.get_program().display().to_string())
         })?;
 
         if !output.status.success() {
             let std_err = String::from_utf8_lossy(&output.stderr);
             log::error!("Non-success status from docker run. StdErr: {std_err}");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::CommandFailed(
+                docker_run_command.get_program().display().to_string(),
+            ));
         }
 
         log::info!("Checking for container that was started");
         let Some(docker_ps) = check_for_existing_container(&self.identifying_labels()).await?
         else {
             log::error!("Could not locate container just created");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
         inspect_image(&docker_ps.id).await
     }
@@ -1145,14 +1148,14 @@ impl DevContainerManifest {
     fn local_workspace_folder(&self) -> String {
         self.local_project_directory.display().to_string()
     }
-    fn local_workspace_base_name(&self) -> Result<String, DevContainerErrorV2> {
+    fn local_workspace_base_name(&self) -> Result<String, DevContainerError> {
         self.local_project_directory
             .file_name()
             .map(|f| f.display().to_string())
-            .ok_or(DevContainerErrorV2::UnmappedError)
+            .ok_or(DevContainerError::DevContainerParseFailed)
     }
 
-    fn remote_workspace_folder(&self) -> Result<PathBuf, DevContainerErrorV2> {
+    fn remote_workspace_folder(&self) -> Result<PathBuf, DevContainerError> {
         self.dev_container()
             .workspace_folder
             .as_ref()
@@ -1160,22 +1163,22 @@ impl DevContainerManifest {
             .or(Some(
                 PathBuf::from(DEFAULT_REMOTE_PROJECT_DIR).join(self.local_workspace_base_name()?),
             ))
-            .ok_or(DevContainerErrorV2::UnmappedError)
+            .ok_or(DevContainerError::DevContainerParseFailed)
     }
-    fn remote_workspace_base_name(&self) -> Result<String, DevContainerErrorV2> {
+    fn remote_workspace_base_name(&self) -> Result<String, DevContainerError> {
         self.remote_workspace_folder().and_then(|f| {
             f.file_name()
                 .map(|file_name| file_name.display().to_string())
-                .ok_or(DevContainerErrorV2::UnmappedError)
+                .ok_or(DevContainerError::DevContainerParseFailed)
         })
     }
 
-    fn remote_workspace_mount(&self) -> Result<PathBuf, DevContainerErrorV2> {
+    fn remote_workspace_mount(&self) -> Result<PathBuf, DevContainerError> {
         if let Some(mount) = &self.dev_container().workspace_mount {
             return Ok(PathBuf::from(&mount.target));
         }
         let Some(project_directory_name) = self.local_project_directory.file_name() else {
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
 
         Ok(PathBuf::from(format!(
@@ -1187,7 +1190,7 @@ impl DevContainerManifest {
     fn create_docker_run_command(
         &self,
         build_resources: DockerBuildResources,
-    ) -> Result<Command, DevContainerErrorV2> {
+    ) -> Result<Command, DevContainerError> {
         let remote_workspace_folder = self.remote_workspace_mount()?;
 
         let mut command = Command::new(docker_cli());
@@ -1225,7 +1228,7 @@ impl DevContainerManifest {
         if let Some(metadata) = &build_resources.image.config.labels.metadata {
             let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
                 log::error!("Problem serializing image metadata: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::ContainerNotValid(build_resources.image.id.clone())
             })?;
             command.arg("-l");
             command.arg(format!(
@@ -1265,7 +1268,7 @@ impl DevContainerManifest {
             .unwrap_or_default()
     }
 
-    async fn build_and_run(&mut self) -> Result<DevContainerUp, DevContainerErrorV2> {
+    async fn build_and_run(&mut self) -> Result<DevContainerUp, DevContainerError> {
         self.run_initialize_commands().await?;
 
         self.download_feature_and_dockerfile_resources().await?;
@@ -1283,10 +1286,10 @@ impl DevContainerManifest {
         &self,
         devcontainer_up: &DevContainerUp,
         new_container: bool,
-    ) -> Result<(), DevContainerErrorV2> {
+    ) -> Result<(), DevContainerError> {
         let ConfigStatus::VariableParsed(config) = &self.config else {
             log::error!("Config not yet parsed, cannot proceed with remote scripts");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerScriptsFailed);
         };
         let remote_folder = self.remote_workspace_folder()?.display().to_string();
 
@@ -1370,10 +1373,10 @@ impl DevContainerManifest {
         Ok(())
     }
 
-    async fn run_initialize_commands(&self) -> Result<(), DevContainerErrorV2> {
+    async fn run_initialize_commands(&self) -> Result<(), DevContainerError> {
         let ConfigStatus::VariableParsed(config) = &self.config else {
             log::error!("Config not yet parsed, cannot proceed with initializeCommand");
-            return Err(DevContainerErrorV2::UnmappedError);
+            return Err(DevContainerError::DevContainerParseFailed);
         };
 
         if let Some(initialize_command) = &config.initialize_command {
@@ -1458,7 +1461,7 @@ pub(crate) async fn read_devcontainer_configuration(
     config: DevContainerConfig,
     context: &DevContainerContext,
     environment: HashMap<String, String>,
-) -> Result<DevContainer, DevContainerErrorV2> {
+) -> Result<DevContainer, DevContainerError> {
     let mut dev_container = DevContainerManifest::new(
         context.fs.clone(),
         context.http_client.clone(),
@@ -1476,7 +1479,7 @@ pub(crate) async fn spawn_dev_container(
     environment: HashMap<String, String>,
     config: DevContainerConfig,
     local_project_path: Arc<&Path>,
-) -> Result<DevContainerUp, DevContainerErrorV2> {
+) -> Result<DevContainerUp, DevContainerError> {
     let mut devcontainer_manifest = DevContainerManifest::new(
         context.fs.clone(),
         context.http_client.clone(),
@@ -1545,7 +1548,7 @@ enum DevContainerBuildResources {
 
 async fn run_docker_compose_build(
     docker_compose: &DockerComposeResources,
-) -> Result<(), DevContainerErrorV2> {
+) -> Result<(), DevContainerError> {
     let mut command = Command::new(docker_cli());
     // TODO project name how
     command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
@@ -1558,13 +1561,15 @@ async fn run_docker_compose_build(
 
     let output = command.output().await.map_err(|e| {
         log::error!("Error running docker compose up: {e}");
-        DevContainerErrorV2::UnmappedError
+        DevContainerError::CommandFailed(command.get_program().display().to_string())
     })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("Non-success status from docker compose up: {}", stderr);
-        return Err(DevContainerErrorV2::UnmappedError);
+        return Err(DevContainerError::CommandFailed(
+            command.get_program().display().to_string(),
+        ));
     }
 
     Ok(())
@@ -1573,27 +1578,25 @@ async fn run_docker_compose_build(
 fn find_primary_service(
     docker_compose: &DockerComposeResources,
     devcontainer: &DevContainerManifest,
-) -> Result<(String, DockerComposeService), DevContainerErrorV2> {
+) -> Result<(String, DockerComposeService), DevContainerError> {
     let Some(service_name) = &devcontainer.dev_container().service else {
-        return Err(DevContainerErrorV2::UnmappedError);
+        return Err(DevContainerError::DevContainerParseFailed);
     };
 
     match docker_compose.config.services.get(service_name) {
         Some(service) => Ok((service_name.clone(), service.clone())),
-        None => Err(DevContainerErrorV2::UnmappedError),
+        None => Err(DevContainerError::DevContainerParseFailed),
     }
 }
 
-fn create_docker_compose_config_command(
-    docker_compose_full_paths: &Vec<PathBuf>,
-) -> Result<Command, DevContainerErrorV2> {
+fn create_docker_compose_config_command(docker_compose_full_paths: &Vec<PathBuf>) -> Command {
     let mut command = smol::process::Command::new(docker_cli());
     command.arg("compose");
     for file_path in docker_compose_full_paths {
         command.args(&["-f", &file_path.display().to_string()]);
     }
     command.args(&["config", "--format", "json"]);
-    Ok(command)
+    command
 }
 
 /// Destination folder inside the container where feature content is staged during build.
@@ -1864,61 +1867,14 @@ USER $_DEV_CONTAINERS_IMAGE_USER
     )
 }
 
-// async fn build_docker_image(
-//     dev_container: &DevContainerManifest,
-// ) -> Result<DockerInspect, DevContainerErrorV2> {
-//     match dev_container.config.build_type() {
-//         DevContainerBuildType::Image => {
-//             let Some(image_tag) = &dev_container.config.image else {
-//                 return Err(DevContainerErrorV2::UnmappedError);
-//             };
-//             let base_image = inspect_image(image_tag).await?;
-//             if dev_container
-//                 .config
-//                 .features
-//                 .as_ref()
-//                 .is_none_or(|features| features.is_empty())
-//             {
-//                 log::info!("No features to add. Using base image");
-//                 return Ok(base_image.clone());
-//             }
-//         }
-//         DevContainerBuildType::Dockerfile => {}
-//         DevContainerBuildType::DockerCompose => todo!("not yet implemented"),
-//         DevContainerBuildType::None => {
-//             return Err(DevContainerErrorV2::UnmappedError);
-//         }
-//     };
-
-//     let mut command = create_docker_build(dev_container)?;
-
-//     let output = command.output().await.map_err(|e| {
-//         log::error!("Error building docker image: {e}");
-//         DevContainerErrorV2::UnmappedError
-//     })?;
-
-//     if !output.status.success() {
-//         let stderr = String::from_utf8_lossy(&output.stderr);
-//         log::error!("docker buildx build failed: {stderr}");
-//         return Err(DevContainerErrorV2::UnmappedError);
-//     }
-
-//     // After a successful build, inspect the newly tagged image to get its metadata
-//     let image = inspect_image(&dev_container.build_image_tag()?).await?;
-
-//     Ok(image)
-// }
-
 async fn check_for_existing_container(
     labels: &Vec<(&str, String)>,
-) -> Result<Option<DockerPs>, DevContainerErrorV2> {
-    let command = create_docker_query_containers(Some(labels))?;
+) -> Result<Option<DockerPs>, DevContainerError> {
+    let command = create_docker_query_containers(Some(labels));
     evaluate_json_command(command).await
 }
 
-fn create_docker_query_containers(
-    filter_labels: Option<&Vec<(&str, String)>>,
-) -> Result<Command, DevContainerErrorV2> {
+fn create_docker_query_containers(filter_labels: Option<&Vec<(&str, String)>>) -> Command {
     let mut command = smol::process::Command::new(docker_cli());
     command.args(&["ps", "-a"]);
 
@@ -1929,14 +1885,14 @@ fn create_docker_query_containers(
         }
     }
     command.arg("--format=json");
-    Ok(command)
+    command
 }
 
 /// TODO test
 fn image_from_dockerfile(
     devcontainer: &DevContainerManifest,
     dockerfile_contents: String,
-) -> Result<String, DevContainerErrorV2> {
+) -> Result<String, DevContainerError> {
     let mut raw_contents = dockerfile_contents
         .lines()
         .find(|line| line.starts_with("FROM"))
@@ -1949,7 +1905,7 @@ fn image_from_dockerfile(
         })
         .ok_or_else(|| {
             log::error!("Could not find an image definition in dockerfile");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::DevContainerParseFailed
         })?;
 
     for (k, v) in devcontainer
@@ -1969,7 +1925,7 @@ fn image_from_dockerfile(
 fn get_remote_user_from_config(
     docker_config: &DockerInspect,
     devcontainer: &DevContainerManifest,
-) -> Result<String, DevContainerErrorV2> {
+) -> Result<String, DevContainerError> {
     if let DevContainer {
         remote_user: Some(user),
         ..
@@ -1979,7 +1935,9 @@ fn get_remote_user_from_config(
     }
     let Some(metadata) = &docker_config.config.labels.metadata else {
         log::error!("Could not locate metadata");
-        return Err(DevContainerErrorV2::UnmappedError);
+        return Err(DevContainerError::ContainerNotValid(
+            docker_config.id.clone(),
+        ));
     };
     for metadatum in metadata {
         if let Some(remote_user) = metadatum.get("remoteUser") {
@@ -1988,14 +1946,17 @@ fn get_remote_user_from_config(
             }
         }
     }
-    Err(DevContainerErrorV2::UnmappedError)
+    log::error!("Could not locate the remote user");
+    Err(DevContainerError::ContainerNotValid(
+        docker_config.id.clone(),
+    ))
 }
 
 // This should come from spec - see the docs
 fn get_container_user_from_config(
     docker_config: &DockerInspect,
     devcontainer: &DevContainerManifest,
-) -> Result<String, DevContainerErrorV2> {
+) -> Result<String, DevContainerError> {
     if let Some(user) = &devcontainer.dev_container().container_user {
         return Ok(user.to_string());
     }
@@ -2012,7 +1973,7 @@ fn get_container_user_from_config(
         return Ok(image_user.to_string());
     }
 
-    Err(DevContainerErrorV2::UnmappedError)
+    Err(DevContainerError::DevContainerParseFailed)
 }
 
 #[cfg(test)]
@@ -2024,7 +1985,8 @@ mod test {
     use http_client::{FakeHttpClient, HttpClient};
 
     use crate::{
-        DevContainerConfig, DevContainerErrorV2,
+        DevContainerConfig,
+        devcontainer_api::DevContainerError,
         docker::{DockerConfigLabels, DockerInspectConfig},
         model::{
             ConfigStatus, DevContainerManifest, DockerInspect, extract_feature_id,
@@ -2124,7 +2086,7 @@ mod test {
         fs: Arc<FakeFs>,
         environment: HashMap<String, String>,
         devcontainer_contents: &str,
-    ) -> Result<DevContainerManifest, DevContainerErrorV2> {
+    ) -> Result<DevContainerManifest, DevContainerError> {
         let local_config = init_devcontainer_config(&fs, devcontainer_contents).await;
         let http_client = fake_http_client();
         DevContainerManifest::new(

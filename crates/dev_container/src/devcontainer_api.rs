@@ -66,13 +66,16 @@ pub(crate) struct DevContainerApplyV2 {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevContainerError {
+    CommandFailed(String),
     DockerNotAvailable,
-    DevContainerCliNotAvailable,
+    ContainerNotValid(String),
     DevContainerTemplateApplyFailed(String),
+    DevContainerScriptsFailed,
     DevContainerUpFailed(String),
     DevContainerNotFound,
     DevContainerParseFailed,
-    NodeRuntimeNotAvailable,
+    FilesystemError,
+    ResourceFetchFailed,
     NotInValidProject,
 }
 
@@ -84,8 +87,11 @@ impl Display for DevContainerError {
             match self {
                 DevContainerError::DockerNotAvailable =>
                     "docker CLI not found on $PATH".to_string(),
-                DevContainerError::DevContainerCliNotAvailable =>
-                    "devcontainer CLI not found on path".to_string(),
+                DevContainerError::ContainerNotValid(id) => format!(
+                    "docker image {id} did not have expected configuration for a dev container"
+                ),
+                DevContainerError::DevContainerScriptsFailed =>
+                    "lifecycle scripts could not execute for dev container".to_string(),
                 DevContainerError::DevContainerUpFailed(_) => {
                     "DevContainer creation failed".to_string()
                 }
@@ -96,9 +102,13 @@ impl Display for DevContainerError {
                     "No valid dev container definition found in project".to_string(),
                 DevContainerError::DevContainerParseFailed =>
                     "Failed to parse file .devcontainer/devcontainer.json".to_string(),
-                DevContainerError::NodeRuntimeNotAvailable =>
-                    "Cannot find a valid node runtime".to_string(),
                 DevContainerError::NotInValidProject => "Not within a valid project".to_string(),
+                DevContainerError::CommandFailed(program) =>
+                    format!("Failure running external program {program}"),
+                DevContainerError::FilesystemError =>
+                    "Error downloading resources locally".to_string(),
+                DevContainerError::ResourceFetchFailed =>
+                    "Failed to fetch resources from template or feature repository".to_string(),
             }
         )
     }
@@ -339,8 +349,8 @@ pub(crate) async fn apply_dev_container_template_v2(
         &context.http_client,
     )
     .map_err(|e| {
-        log::error!("TODO {e}");
-        DevContainerError::DevContainerCliNotAvailable
+        log::error!("Failed to get OCI auth token: {e}");
+        DevContainerError::ResourceFetchFailed
     })
     .await?;
     let manifest = get_latest_oci_manifest(
@@ -351,14 +361,14 @@ pub(crate) async fn apply_dev_container_template_v2(
         Some(&template.id),
     )
     .map_err(|e| {
-        log::error!("TODO {e}");
-        DevContainerError::DevContainerCliNotAvailable
+        log::error!("Failed to fetch template from OCI repository: {e}");
+        DevContainerError::ResourceFetchFailed
     })
     .await?;
 
     let layer = &manifest.layers.get(0).ok_or_else(|| {
         log::error!("Given manifest has no layers to query for blob. Aborting");
-        DevContainerError::DockerNotAvailable
+        DevContainerError::ResourceFetchFailed
     })?;
 
     let timestamp = std::time::SystemTime::now()
@@ -371,7 +381,7 @@ pub(crate) async fn apply_dev_container_template_v2(
 
     context.fs.create_dir(&extract_dir).await.map_err(|e| {
         log::error!("Could not create temporary directory: {e}");
-        DevContainerError::DevContainerParseFailed // TODO
+        DevContainerError::FilesystemError
     })?;
 
     download_oci_tarball(
@@ -387,7 +397,7 @@ pub(crate) async fn apply_dev_container_template_v2(
     )
     .map_err(|e| {
         log::error!("Error downloading tarball: {:?}", e);
-        DevContainerError::DevContainerNotFound
+        DevContainerError::ResourceFetchFailed
     })
     .await?;
 
@@ -402,14 +412,17 @@ pub(crate) async fn apply_dev_container_template_v2(
         }
         let relative_path = entry.path().strip_prefix(&extract_dir).map_err(|e| {
             log::error!("Can't create relative path: {e}");
-            DevContainerError::DockerNotAvailable // TODO
+            DevContainerError::FilesystemError
         })?;
         let rel_path = RelPath::unix(relative_path)
-            .map_err(|_| DevContainerError::DevContainerParseFailed)? // TODO
+            .map_err(|e| {
+                log::error!("Can't create relative path: {e}");
+                DevContainerError::FilesystemError
+            })?
             .into_arc();
         let content = context.fs.load(entry.path()).await.map_err(|e| {
             log::error!("Unable to read file: {e}");
-            DevContainerError::DevContainerCliNotAvailable // TODO
+            DevContainerError::FilesystemError
         })?;
 
         let mut content = expand_template_options(content, template_options);
@@ -423,7 +436,7 @@ pub(crate) async fn apply_dev_container_template_v2(
             .await
             .map_err(|e| {
                 log::error!("Unable to create entry in worktree: {e}");
-                DevContainerError::DockerNotAvailable // TODO
+                DevContainerError::NotInValidProject
             })?;
         project_files.push(rel_path);
     }

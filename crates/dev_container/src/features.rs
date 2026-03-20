@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json_lenient::Value;
 
 use crate::{
-    DevContainerErrorV2,
+    devcontainer_api::DevContainerError,
     devcontainer_json::{FeatureOptions, MountDefinition},
     safe_id_upper,
 };
@@ -102,7 +102,7 @@ impl FeatureManifest {
         &self,
         fs: &Arc<dyn Fs>,
         options: &FeatureOptions,
-    ) -> Result<String, DevContainerErrorV2> {
+    ) -> Result<String, DevContainerError> {
         let merged_env = self.genereate_merged_env(options);
 
         let env_vars: Vec<String> = merged_env
@@ -119,7 +119,7 @@ impl FeatureManifest {
         .await
         .map_err(|e| {
             log::error!("error writing devcontainer feature environment: {e}");
-            DevContainerErrorV2::UnmappedError
+            DevContainerError::FilesystemError
         })?;
 
         Ok(env_file_content)

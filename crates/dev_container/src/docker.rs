@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use serde::{Deserialize, Deserializer, Serialize};
 use smol::process::Command;
 
-use crate::{DevContainerErrorV2, command_json::evaluate_json_command};
+use crate::{command_json::evaluate_json_command, devcontainer_api::DevContainerError};
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
@@ -45,32 +45,32 @@ pub(crate) struct DockerInspectMount {
     pub(crate) destination: String,
 }
 
-pub(crate) async fn pull_image(image: &String) -> Result<(), DevContainerErrorV2> {
+pub(crate) async fn pull_image(image: &String) -> Result<(), DevContainerError> {
     let mut command = smol::process::Command::new(docker_cli());
     command.args(&["pull", image]);
 
     let output = command.output().await.map_err(|e| {
         log::error!("Error pulling image: {e}");
-        DevContainerErrorV2::UnmappedError
+        DevContainerError::ResourceFetchFailed
     })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("Non-success result from docker pull: {stderr}");
-        return Err(DevContainerErrorV2::UnmappedError);
+        return Err(DevContainerError::ResourceFetchFailed);
     }
     Ok(())
 }
 
-pub(crate) async fn inspect_image(image: &String) -> Result<DockerInspect, DevContainerErrorV2> {
+pub(crate) async fn inspect_image(image: &String) -> Result<DockerInspect, DevContainerError> {
     // Try to pull the image, continue on failure; Image may be local only, or network unavailable
     pull_image(image).await.ok();
 
     let command = create_docker_inspect(image);
 
     let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await? else {
-        log::error!("Error TODO");
-        return Err(DevContainerErrorV2::UnmappedError);
+        log::error!("Docker inspect produced no deserializable output");
+        return Err(DevContainerError::CommandFailed("docker".to_string()));
     };
     Ok(docker_inspect)
 }
@@ -81,7 +81,7 @@ pub(crate) async fn run_docker_exec(
     user: &str,
     env: &HashMap<String, String>,
     inner_command: Command,
-) -> Result<(), DevContainerErrorV2> {
+) -> Result<(), DevContainerError> {
     dbg!(&inner_command);
     let mut command = Command::new(docker_cli());
 
@@ -109,8 +109,8 @@ pub(crate) async fn run_docker_exec(
     dbg!(&command);
 
     let output = command.output().await.map_err(|e| {
-        log::error!("Error running command {e}");
-        DevContainerErrorV2::UnmappedError
+        log::error!("Error running command {e} in container exec");
+        DevContainerError::ContainerNotValid(container_id.to_string())
     })?;
     if !output.status.success() {
         let std_err = String::from_utf8_lossy(&output.stderr);
@@ -161,12 +161,12 @@ pub(crate) fn docker_cli() -> &'static str {
 pub(crate) fn get_remote_dir_from_config(
     config: &DockerInspect,
     local_dir: String,
-) -> Result<String, DevContainerErrorV2> {
+) -> Result<String, DevContainerError> {
     let local_path = PathBuf::from(&local_dir);
 
     let Some(mounts) = &config.mounts else {
-        log::error!("No mounts");
-        return Err(DevContainerErrorV2::UnmappedError);
+        log::error!("No mounts defined for container");
+        return Err(DevContainerError::ContainerNotValid(config.id.clone()));
     };
 
     for mount in mounts {
@@ -187,7 +187,7 @@ pub(crate) fn get_remote_dir_from_config(
         }
     }
     log::error!("No mounts to local folder");
-    Err(DevContainerErrorV2::UnmappedError)
+    Err(DevContainerError::ContainerNotValid(config.id.clone()))
 }
 
 #[cfg(test)]

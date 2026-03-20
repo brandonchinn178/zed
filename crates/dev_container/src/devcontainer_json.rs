@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display, path::Path};
 
-use crate::DevContainerErrorV2;
+use crate::devcontainer_api::DevContainerError;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json_lenient::Value;
 use smol::process::Command;
@@ -236,24 +236,22 @@ pub(crate) struct DevContainer {
     host_requirements: Option<HostRequirements>,
 }
 
-pub(crate) fn deserialize_devcontainer_json(
-    json: &str,
-) -> Result<DevContainer, DevContainerErrorV2> {
+pub(crate) fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, DevContainerError> {
     match serde_json_lenient::from_str(json) {
         Ok(devcontainer) => Ok(devcontainer),
         Err(e) => {
-            dbg!(&e);
-            Err(DevContainerErrorV2::UnmappedError)
+            log::error!("Unable to deserialize devcontainer from json: {e}");
+            Err(DevContainerError::DevContainerParseFailed)
         }
     }
 }
 
 impl DevContainer {
-    fn _validate_structure(&self) -> Result<(), DevContainerErrorV2> {
+    fn _validate_structure(&self) -> Result<(), DevContainerError> {
         // TODO
         Ok(())
     }
-    fn _validate_features(&self) -> Result<(), DevContainerErrorV2> {
+    fn _validate_features(&self) -> Result<(), DevContainerError> {
         // TODO
         Ok(())
     }
@@ -333,7 +331,7 @@ impl LifecyleScript {
             .collect()
     }
 
-    pub async fn run(&self, working_directory: &Path) -> Result<(), DevContainerErrorV2> {
+    pub async fn run(&self, working_directory: &Path) -> Result<(), DevContainerError> {
         for (command_name, mut command) in self.script_commands() {
             log::info!("Running script {command_name}");
 
@@ -341,7 +339,7 @@ impl LifecyleScript {
 
             let output = command.output().await.map_err(|e| {
                 log::error!("Error running command {command_name}: {e}");
-                DevContainerErrorV2::UnmappedError
+                DevContainerError::CommandFailed(command_name.clone())
             })?;
             if !output.status.success() {
                 let std_err = String::from_utf8_lossy(&output.stderr);
@@ -575,7 +573,7 @@ mod test {
     use std::collections::HashMap;
 
     use crate::{
-        DevContainerErrorV2,
+        devcontainer_api::DevContainerError,
         devcontainer_json::{
             ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
             HostRequirements, LifecycleCommand, LifecyleScript, MountDefinition, OnAutoForward,
@@ -667,7 +665,10 @@ mod test {
         let result = deserialize_devcontainer_json(given_bad_json);
 
         assert!(result.is_err());
-        assert_eq!(result.expect_err("err"), DevContainerErrorV2::UnmappedError);
+        assert_eq!(
+            result.expect_err("err"),
+            DevContainerError::DevContainerParseFailed
+        );
 
         let given_image_container_json = r#"
             // These are some external comments. serde_lenient should handle them
