@@ -830,6 +830,7 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     assert_eq!(fs.trash_entries().len(), 2);
 }
 
+#[gpui::test]
 #[ignore = "stress test; run explicitly when needed"]
 async fn test_realfs_watch_stress_reports_missed_paths(
     executor: BackgroundExecutor,
