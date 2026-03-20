@@ -563,7 +563,6 @@ struct GraphData {
     lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
-    oid_to_line: HashMap<Oid, usize>,
 }
 
 impl GraphData {
@@ -580,7 +579,6 @@ impl GraphData {
             lines: Vec::default(),
             active_commit_lines: HashMap::default(),
             active_commit_lines_by_parent: HashMap::default(),
-            oid_to_line: HashMap::default(),
         }
     }
 
@@ -592,7 +590,6 @@ impl GraphData {
         self.lines.clear();
         self.active_commit_lines.clear();
         self.active_commit_lines_by_parent.clear();
-        self.oid_to_line.clear();
         self.next_color = BranchColor(0);
         self.max_commit_count = AllCommitCount::NotLoaded;
         self.max_lanes = 0;
@@ -719,7 +716,6 @@ impl GraphData {
 
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
-            self.oid_to_line.insert(commit.sha, self.commits.len());
             self.commits.push(Rc::new(CommitEntry {
                 data: commit.clone(),
                 lane: commit_lane,
@@ -1342,14 +1338,19 @@ impl GitGraph {
         });
 
         let search_task = cx.spawn(async move |this, cx| {
-            while let Ok(oid) = request_rx.recv().await {
+            while let Ok(first_oid) = request_rx.recv().await {
+                let mut pending_oids = vec![first_oid];
+                while let Ok(oid) = request_rx.try_recv() {
+                    pending_oids.push(oid);
+                }
+
                 this.update(cx, |this, cx| {
                     if this.search_state.selected_index.is_none() {
                         this.search_state.selected_index = Some(0);
-                        this.select_commit_by_sha(oid, cx);
+                        this.select_commit_by_sha(first_oid, cx);
                     }
 
-                    this.search_state.matches.insert(oid);
+                    this.search_state.matches.extend(pending_oids);
                     cx.notify();
                 })
                 .ok();

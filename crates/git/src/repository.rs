@@ -190,21 +190,6 @@ pub struct InitialGraphCommitData {
     pub ref_names: Vec<SharedString>,
 }
 
-pub fn commit_message_matches_query(message: &str, query: &str, is_regex: bool) -> Result<bool> {
-    if query.is_empty() {
-        return Ok(false);
-    }
-
-    if is_regex {
-        let regex = regex::RegexBuilder::new(query)
-            .case_insensitive(true)
-            .build()?;
-        Ok(regex.is_match(message))
-    } else {
-        Ok(message.to_lowercase().contains(&query.to_lowercase()))
-    }
-}
-
 struct CommitDataRequest {
     sha: Oid,
     response_tx: oneshot::Sender<Result<GraphCommitData>>,
