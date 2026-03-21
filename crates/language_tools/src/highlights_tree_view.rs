@@ -306,7 +306,7 @@ impl HighlightsTreeView {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
                     let (range_display, point_range) =
-                        format_anchor_range(range, &multi_buffer_snapshot, is_singleton);
+                        format_anchor_range(range, &multi_buffer_snapshot);
                     entries.push(HighlightEntry {
                         range: range.clone(),
                         range_display,
@@ -428,7 +428,7 @@ impl HighlightsTreeView {
 
                 let range = start..end;
                 let (range_display, point_range) =
-                    format_anchor_range(&range, &multi_buffer_snapshot, is_singleton);
+                    format_anchor_range(&range, &multi_buffer_snapshot);
 
                 entries.push(HighlightEntry {
                     range,

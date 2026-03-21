@@ -816,8 +816,9 @@ impl ProjectDiff {
             let mut previous_paths = this
                 .multibuffer
                 .read(cx)
-                .paths()
-                .cloned()
+                .snapshot(cx)
+                .buffers_with_paths()
+                .map(|(_, path_key)| path_key.clone())
                 .collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
@@ -906,13 +907,10 @@ impl ProjectDiff {
         Ok(())
     }
 
+    // FIXME remove seems useless
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
-        self.multibuffer
-            .read(cx)
-            .paths()
-            .map(|key| key.path.clone())
-            .collect()
+        todo!()
     }
 }
 
