@@ -1352,7 +1352,7 @@ fn argument(
     )?;
 
     let result = snapshot.anchor_range_in_buffer(buffer.anchor_range_inside(result))?;
-    result.start.to_display_point(map)..result.end.to_display_point(map);
+    Some(result.start.to_display_point(map)..result.end.to_display_point(map))
 }
 
 fn indent(
@@ -3372,7 +3372,12 @@ mod test {
             // but, since this is being set manually, the language isn't
             // automatically set.
             let editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
-            let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+            let buffer_ids = multi_buffer
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .map(|excerpt| excerpt.context.start.buffer_id)
+                .collect::<Vec<_>>();
             if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_ids[1]) {
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(Some(language::rust_lang()), cx);

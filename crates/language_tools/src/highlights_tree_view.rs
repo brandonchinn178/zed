@@ -114,7 +114,7 @@ impl HighlightCategory {
 #[derive(Debug, Clone)]
 struct HighlightEntry {
     range: Range<Anchor>,
-    point_range: Range<Point>,
+    buffer_point_range: Range<Point>,
     range_display: SharedString,
     style: HighlightStyle,
     category: HighlightCategory,
@@ -305,14 +305,14 @@ impl HighlightsTreeView {
         display_map.update(cx, |display_map, cx| {
             for (key, text_highlights) in display_map.all_text_highlights() {
                 for range in &text_highlights.1 {
-                    let (range_display, point_range) =
+                    let (range_display, buffer_point_range) =
                         format_anchor_range(range, &multi_buffer_snapshot);
                     entries.push(HighlightEntry {
                         range: range.clone(),
                         range_display,
                         style: text_highlights.0,
                         category: HighlightCategory::Text(*key),
-                        point_range,
+                        buffer_point_range,
                     });
                 }
             }
@@ -325,8 +325,8 @@ impl HighlightsTreeView {
                         .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
                     for token in tokens.iter() {
                         let range = token.range.start..token.range.end;
-                        let (range_display, point_range) =
-                            format_anchor_range(&range, &multi_buffer_snapshot, is_singleton);
+                        let (range_display, buffer_point_range) =
+                            format_anchor_range(&range, &multi_buffer_snapshot);
                         let Some(stylizer) = lsp_store.get_or_create_token_stylizer(
                             token.server_id,
                             language_name.as_ref(),
@@ -371,7 +371,7 @@ impl HighlightsTreeView {
                                     .map(SharedString::from),
                                 theme_key,
                             },
-                            point_range,
+                            buffer_point_range,
                         });
                     }
                 }
@@ -427,7 +427,7 @@ impl HighlightsTreeView {
                 };
 
                 let range = start..end;
-                let (range_display, point_range) =
+                let (range_display, buffer_point_range) =
                     format_anchor_range(&range, &multi_buffer_snapshot);
 
                 entries.push(HighlightEntry {
@@ -438,19 +438,21 @@ impl HighlightsTreeView {
                         capture_name,
                         theme_key,
                     },
-                    point_range,
+                    buffer_point_range,
                 });
             }
         }
 
         entries.sort_by(|a, b| {
-            a.point_range
+            a.buffer_point_range
                 .start
-                .cmp(&b.point_range.start)
-                .then_with(|| a.point_range.end.cmp(&b.point_range.end))
+                .cmp(&b.buffer_point_range.start)
+                .then_with(|| a.buffer_point_range.end.cmp(&b.buffer_point_range.end))
                 .then_with(|| a.category.cmp(&b.category))
         });
-        entries.dedup_by(|a, b| a.point_range == b.point_range && a.category == b.category);
+        entries.dedup_by(|a, b| {
+            a.buffer_point_range == b.buffer_point_range && a.category == b.category
+        });
 
         self.cached_entries = entries;
         self.rebuild_display_items(&multi_buffer_snapshot, cx);
@@ -476,11 +478,11 @@ impl HighlightsTreeView {
             if !self.is_singleton {
                 let excerpt_changed = last_range_end.is_none_or(|point| {
                     snapshot
-                        .excerpt_containing2(point..entry.point_range.start)
+                        .excerpt_containing2(point..entry.buffer_point_range.start)
                         .is_none()
                 });
                 if excerpt_changed {
-                    last_range_end = Some(entry.point_range.end);
+                    last_range_end = Some(entry.buffer_point_range.end);
                     let label = excerpt_label_for(entry, snapshot, cx);
                     self.display_items
                         .push(DisplayItem::ExcerptSeparator { label });
@@ -514,16 +516,17 @@ impl HighlightsTreeView {
                 _ => None,
             })
             .filter(|(_, _, entry)| {
-                entry.point_range.start <= cursor_point && cursor_point <= entry.point_range.end
+                entry.buffer_point_range.start <= cursor_point
+                    && cursor_point <= entry.buffer_point_range.end
             })
             .min_by_key(|(_, _, entry)| {
                 (
-                    entry.point_range.end.row - entry.point_range.start.row,
+                    entry.buffer_point_range.end.row - entry.buffer_point_range.start.row,
                     entry
-                        .point_range
+                        .buffer_point_range
                         .end
                         .column
-                        .saturating_sub(entry.point_range.start.column),
+                        .saturating_sub(entry.buffer_point_range.start.column),
                 )
             })
             .map(|(display_ix, entry_ix, _)| (display_ix, entry_ix));
@@ -1074,8 +1077,26 @@ fn excerpt_label_for(
     path_label.into()
 }
 
-fn format_anchor_range(range: &Range<Anchor>, snapshot: &MultiBufferSnapshot) -> SharedString {
-    todo!()
+fn format_anchor_range(
+    range: &Range<Anchor>,
+    snapshot: &MultiBufferSnapshot,
+) -> (SharedString, Range<Point>) {
+    let start = range.start.to_point(snapshot);
+    let end = range.end.to_point(snapshot);
+    let Some(((_, start), (_, end))) = snapshot
+        .point_to_buffer_point(start)
+        .zip(snapshot.point_to_buffer_point(end))
+    else {
+        return ("[]".into(), Point::zero()..Point::zero());
+    };
+    let display = SharedString::from(format!(
+        "[{}:{} - {}:{}]",
+        start.row + 1,
+        start.column + 1,
+        end.row + 1,
+        end.column + 1,
+    ));
+    (display, start..end)
 }
 
 fn render_style_preview(style: HighlightStyle, selected: bool, cx: &App) -> Div {

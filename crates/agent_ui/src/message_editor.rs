@@ -1617,15 +1617,6 @@ mod tests {
 
         cx.run_until_parked();
 
-        let excerpt_id = editor.update(cx, |editor, cx| {
-            editor
-                .buffer()
-                .read(cx)
-                .excerpt_ids()
-                .into_iter()
-                .next()
-                .unwrap()
-        });
         let completions = editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello @file ", window, cx);
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
