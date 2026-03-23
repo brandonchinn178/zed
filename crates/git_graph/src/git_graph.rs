@@ -14,7 +14,7 @@ use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_i
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Corner, DefiniteLength, DragMoveEvent,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
-    Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task,
+    Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
 };
@@ -1310,6 +1310,9 @@ impl GitGraph {
 
         self.search_state.matches.clear();
         self.search_state.selected_index = None;
+        self.search_state.editor.update(cx, |editor, _cx| {
+            editor.set_text_style_refinement(Default::default());
+        });
 
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
 
@@ -1343,6 +1346,18 @@ impl GitGraph {
                 })
                 .ok();
             }
+
+            this.update(cx, |this, cx| {
+                if this.search_state.matches.is_empty() {
+                    this.search_state.editor.update(cx, |editor, cx| {
+                        editor.set_text_style_refinement(TextStyleRefinement {
+                            color: Some(Color::Error.color(cx)),
+                            ..Default::default()
+                        });
+                    });
+                }
+            })
+            .ok();
         });
 
         self.search_state.state = QueryState::Confirmed((query, search_task));
@@ -1604,18 +1619,37 @@ impl GitGraph {
                             })
                     })
                     .child(
-                        Label::new(format!(
-                            "{}/{}",
-                            self.search_state
-                                .selected_index
-                                .map(|index| index + 1)
-                                .unwrap_or(0),
-                            self.search_state.matches.len()
-                        ))
-                        .size(LabelSize::Small)
-                        .when(self.search_state.matches.is_empty(), |this| {
-                            this.color(Color::Disabled)
-                        }),
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Label::new(format!(
+                                    "{}/{}",
+                                    self.search_state
+                                        .selected_index
+                                        .map(|index| index + 1)
+                                        .unwrap_or(0),
+                                    self.search_state.matches.len()
+                                ))
+                                .size(LabelSize::Small)
+                                .when(self.search_state.matches.is_empty(), |this| {
+                                    this.color(Color::Disabled)
+                                }),
+                            )
+                            .when(
+                                matches!(
+                                    &self.search_state.state,
+                                    QueryState::Confirmed((_, task)) if !task.is_ready()
+                                ),
+                                |this| {
+                                    this.child(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .color(Color::Accent)
+                                            .size(IconSize::Small)
+                                            .with_rotate_animation(2)
+                                            .into_any_element(),
+                                    )
+                                },
+                            ),
                     ),
             )
     }
