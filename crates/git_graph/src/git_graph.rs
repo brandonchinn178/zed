@@ -1192,44 +1192,32 @@ impl GitGraph {
                         QueryState::Confirmed((query, _)) => Some(query.clone()),
                         _ => None,
                     };
-                    let highlight_indices = query
+                    let highlight_ranges = query
                         .and_then(|q| {
-                            let mut indices = Vec::new();
-                            let mut start = 0;
-
-                            if self.search_state.case_sensitive {
-                                while let Some(pos) = subject[start..].find(q.as_str()) {
-                                    let abs_pos = start + pos;
-                                    for i in abs_pos..abs_pos + q.len() {
-                                        if subject.is_char_boundary(i) {
-                                            indices.push(i);
-                                        }
-                                    }
-                                    start = abs_pos + q.len();
-                                }
+                            let ranges = if self.search_state.case_sensitive {
+                                subject
+                                    .match_indices(q.as_str())
+                                    .map(|(start, matched)| start..start + matched.len())
+                                    .collect::<Vec<_>>()
                             } else {
                                 let q = q.to_lowercase();
                                 let subject_lower = subject.to_lowercase();
 
-                                while let Some(pos) = subject_lower[start..].find(&q) {
-                                    let abs_pos = start + pos;
-                                    for i in abs_pos..abs_pos + q.len() {
-                                        if subject.is_char_boundary(i) {
-                                            indices.push(i);
-                                        }
-                                    }
-                                    start = abs_pos + q.len();
-                                }
-                            }
+                                subject_lower
+                                    .match_indices(&q)
+                                    .filter_map(|(start, matched)| {
+                                        let end = start + matched.len();
+                                        subject.is_char_boundary(start).then_some(()).and_then(
+                                            |_| subject.is_char_boundary(end).then_some(start..end),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            };
 
-                            if indices.is_empty() {
-                                None
-                            } else {
-                                Some(indices)
-                            }
+                            (!ranges.is_empty()).then_some(ranges)
                         })
                         .unwrap_or_default();
-                    HighlightedLabel::new(subject.clone(), highlight_indices)
+                    HighlightedLabel::from_ranges(subject.clone(), highlight_ranges)
                         .when(!is_selected, |c| c.color(Color::Muted))
                         .truncate()
                         .into_any_element()
