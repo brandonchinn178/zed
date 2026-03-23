@@ -6115,6 +6115,10 @@ impl Workspace {
             .collect::<Vec<_>>()
     }
 
+    pub fn path_list(&self, cx: &App) -> PathList {
+        PathList::new(&self.root_paths(cx))
+    }
+
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {

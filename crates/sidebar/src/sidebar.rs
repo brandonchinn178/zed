@@ -25,7 +25,7 @@ use ui::utils::platform_title_bar_height;
 use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -190,7 +190,7 @@ fn root_repository_snapshots(
     workspace: &Entity<Workspace>,
     cx: &App,
 ) -> Vec<project::git_store::RepositorySnapshot> {
-    let path_list = workspace_path_list(workspace, cx);
+    let path_list = workspace.read(cx).path_list(cx);
     let project = workspace.read(cx).project().read(cx);
     project
         .repositories(cx)
@@ -205,12 +205,6 @@ fn root_repository_snapshots(
         })
         .collect()
 }
-
-fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
-    PathList::new(&workspace.read(cx).root_paths(cx))
-}
-
-use std::path::PathBuf;
 
 /// Build a mapping from git worktree checkout paths to their root repo paths.
 ///
@@ -839,7 +833,7 @@ impl Sidebar {
 
         let has_open_projects = workspaces
             .iter()
-            .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
+            .any(|ws| !ws.read(cx).path_list(cx).paths().is_empty());
 
         let active_ws_index = active_workspace
             .as_ref()
@@ -855,7 +849,7 @@ impl Sidebar {
                 continue;
             }
 
-            let path_list = workspace_path_list(workspace, cx);
+            let path_list = workspace.read(cx).path_list(cx);
             if path_list.paths().is_empty() {
                 continue;
             }
@@ -2047,7 +2041,7 @@ impl Sidebar {
         // contains other folders.
         let mut to_remove: Vec<Entity<Workspace>> = Vec::new();
         for workspace in &workspaces {
-            let path_list = workspace_path_list(workspace, cx);
+            let path_list = workspace.read(cx).path_list(cx);
             if path_list.paths().len() != 1 {
                 continue;
             }
@@ -2488,7 +2482,7 @@ impl Sidebar {
             let worktree_to_root = build_worktree_root_mapping(&[workspace.clone()], cx);
             let canonical_thread = canonicalize_path_list(path_list, &worktree_to_root);
             let canonical_workspace =
-                canonicalize_path_list(&workspace_path_list(workspace, cx), &worktree_to_root);
+                canonicalize_path_list(&workspace.read(cx).path_list(cx), &worktree_to_root);
             canonical_workspace == canonical_thread
         })
     }
@@ -2502,7 +2496,7 @@ impl Sidebar {
             let worktree_to_root = build_worktree_root_mapping(&[workspace.clone()], cx);
             let canonical_thread = canonicalize_path_list(path_list, &worktree_to_root);
             let canonical_workspace =
-                canonicalize_path_list(&workspace_path_list(workspace, cx), &worktree_to_root);
+                canonicalize_path_list(&workspace.read(cx).path_list(cx), &worktree_to_root);
             canonical_workspace == canonical_thread
         })
     }
@@ -6464,8 +6458,7 @@ mod tests {
             mw.workspaces()[1].clone()
         });
 
-        let new_path_list =
-            new_workspace.read_with(cx, |_, cx| workspace_path_list(&new_workspace, cx));
+        let new_path_list = new_workspace.read_with(cx, |ws, cx| ws.path_list(cx));
         assert_eq!(
             new_path_list,
             PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]),
