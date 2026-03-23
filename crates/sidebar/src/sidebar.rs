@@ -812,6 +812,10 @@ impl Sidebar {
                 }
             }
         }
+        debug_assert!(
+            pending.is_empty(),
+            "all workspaces should be absorbed by a parent"
+        );
 
         // Build a mapping from worktree checkout paths → root repo paths so
         // that threads saved against a worktree checkout can be grouped under
