@@ -11,8 +11,10 @@ use project::Project;
 use settings::Settings;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
+use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
@@ -671,6 +673,66 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    pub fn move_workspace_to_new_window(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspaces.len() <= 1 || index >= self.workspaces.len() {
+            return;
+        }
+
+        let is_active = index == self.active_workspace_index;
+        let workspace = &self.workspaces[index];
+        let paths: Vec<PathBuf> = workspace
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect();
+        let app_state: Arc<crate::AppState> = workspace.read(cx).app_state().clone();
+
+        self.remove_workspace(index, window, cx);
+
+        let open_task = cx.spawn(async move |_, cx| {
+            let open_result = cx
+                .update(|cx| {
+                    crate::open_paths(
+                        &paths,
+                        app_state,
+                        crate::OpenOptions {
+                            open_new_workspace: Some(true),
+                            ..Default::default()
+                        },
+                        cx,
+                    )
+                })
+                .await?;
+
+            if is_active {
+                open_result
+                    .window
+                    .update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    })
+                    .log_err();
+            }
+
+            anyhow::Ok(())
+        });
+        open_task.detach_and_log_err(cx);
+    }
+
+    fn move_active_workspace_to_new_window(
+        &mut self,
+        _: &MoveWorkspaceToNewWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let index = self.active_workspace_index;
+        self.move_workspace_to_new_window(index, window, cx);
+    }
+
     pub fn open_project(
         &mut self,
         paths: Vec<PathBuf>,
@@ -789,6 +851,7 @@ impl Render for MultiWorkspace {
                     ))
                     .on_action(cx.listener(Self::next_workspace))
                     .on_action(cx.listener(Self::previous_workspace))
+                    .on_action(cx.listener(Self::move_active_workspace_to_new_window))
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
