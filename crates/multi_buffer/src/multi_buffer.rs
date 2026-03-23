@@ -5532,6 +5532,105 @@ impl MultiBufferSnapshot {
         self.non_text_state_update_count
     }
 
+    fn excerpt_range_to_output_range(
+        &self,
+        range: Range<ExcerptOffset>,
+    ) -> Range<MultiBufferOffset> {
+        if self.diff_transforms.is_empty() {
+            return range.start.0..range.end.0;
+        }
+        let mut cursor = self
+            .diff_transforms
+            .cursor::<DiffTransforms<MultiBufferOffset>>(());
+        cursor.seek(&range.start, Bias::Right);
+        let mut start = cursor.start().output_dimension;
+        start += range.start - cursor.start().excerpt_dimension;
+        cursor.seek_forward(&range.end, Bias::Right);
+        let mut end = cursor.start().output_dimension;
+        end += range.end - cursor.start().excerpt_dimension;
+        start.0..end.0
+    }
+
+    fn excerpt_containing(
+        &self,
+        range: Range<MultiBufferOffset>,
+    ) -> Option<(&Excerpt, ExcerptOffset, Range<BufferOffset>)> {
+        let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
+        cursor.seek(&range.start);
+        let start_excerpt = cursor.excerpt()?;
+        let excerpt_start = *cursor.excerpts.start();
+        let region = cursor.region()?.clone();
+        let input_buffer_start = if region.is_main_buffer {
+            let overshoot = range.start.saturating_sub(region.range.start);
+            BufferOffset(region.buffer_range.start.0 + overshoot)
+        } else {
+            region.buffer_range.start
+        };
+        let input_buffer_end = if range.end != range.start {
+            cursor.seek_forward(&range.end);
+            if cursor.excerpt()? != start_excerpt {
+                return None;
+            }
+            let region = cursor.region()?.clone();
+            if region.is_main_buffer {
+                let overshoot = range.end.saturating_sub(region.range.start);
+                BufferOffset(region.buffer_range.start.0 + overshoot)
+            } else {
+                region.buffer_range.start
+            }
+        } else {
+            input_buffer_start
+        };
+        Some((
+            start_excerpt,
+            excerpt_start,
+            input_buffer_start..input_buffer_end,
+        ))
+    }
+
+    pub fn map_excerpt_ranges<T>(
+        &self,
+        position: Range<impl ToOffset>,
+        f: impl FnOnce(
+            &BufferSnapshot,
+            ExcerptRange<BufferOffset>,
+            Range<BufferOffset>,
+        ) -> Vec<(Range<BufferOffset>, T)>,
+    ) -> Option<Vec<(Range<MultiBufferOffset>, T)>> {
+        let position = position.start.to_offset(self)..position.end.to_offset(self);
+        let (excerpt, excerpt_start, input_buffer_range) = self.excerpt_containing(position)?;
+        let buffer = excerpt.buffer_snapshot(self);
+        let excerpt_buffer_start =
+            BufferOffset(buffer.offset_for_anchor(&excerpt.range.context.start));
+        let excerpt_buffer_end = BufferOffset(buffer.offset_for_anchor(&excerpt.range.context.end));
+        let excerpt_primary_start =
+            BufferOffset(buffer.offset_for_anchor(&excerpt.range.primary.start));
+        let excerpt_primary_end =
+            BufferOffset(buffer.offset_for_anchor(&excerpt.range.primary.end));
+        let results = f(
+            buffer,
+            ExcerptRange {
+                context: excerpt_buffer_start..excerpt_buffer_end,
+                primary: excerpt_primary_start..excerpt_primary_end,
+            },
+            input_buffer_range,
+        );
+        Some(
+            results
+                .into_iter()
+                .map(|(buffer_range, metadata)| {
+                    let excerpt_offset_start =
+                        excerpt_start + (buffer_range.start - excerpt_buffer_start);
+                    let excerpt_offset_end =
+                        excerpt_start + (buffer_range.end - excerpt_buffer_start);
+                    let output_range = self
+                        .excerpt_range_to_output_range(excerpt_offset_start..excerpt_offset_end);
+                    (output_range, metadata)
+                })
+                .collect(),
+        )
+    }
+
     /// Returns the smallest enclosing bracket ranges containing the given range or
     /// None if no brackets contain range or the range is not contained in a single
     /// excerpt
@@ -5545,39 +5644,31 @@ impl MultiBufferSnapshot {
             &dyn Fn(&BufferSnapshot, Range<BufferOffset>, Range<BufferOffset>) -> bool,
         >,
     ) -> Option<(Range<MultiBufferOffset>, Range<MultiBufferOffset>)> {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let range = self.anchor_after(range.start)..self.anchor_before(range.end);
-        let (buffer_snapshot, buffer_range) =
-            self.anchor_range_to_buffer_anchor_range(range.clone())?;
-        let (_, excerpt_range) = self.excerpt_containing2(range)?;
-        let excerpt_buffer_range = excerpt_range.context.to_offset(&buffer_snapshot);
-
-        // Filter to ranges contained in the excerpt
-        let range_filter = |open: Range<usize>, close: Range<usize>| -> bool {
-            excerpt_buffer_range.start <= open.start
-                && close.end <= excerpt_buffer_range.end
-                && range_filter.is_none_or(|filter| {
-                    filter(
-                        &buffer_snapshot,
-                        BufferOffset(open.start)..BufferOffset(close.end),
-                        BufferOffset(close.start)..BufferOffset(close.end),
-                    )
-                })
-        };
-
-        let (open, close) = buffer_snapshot
-            .innermost_enclosing_bracket_ranges(buffer_range, Some(&range_filter))?;
-
-        let open_anchors = buffer_snapshot.anchor_range_inside(open);
-        let close_anchors = buffer_snapshot.anchor_range_inside(close);
-        Some((
-            (self.anchor_in_buffer_unchecked(open_anchors.start)?
-                ..self.anchor_in_buffer_unchecked(open_anchors.end)?)
-                .to_offset(self),
-            (self.anchor_in_buffer_unchecked(close_anchors.start)?
-                ..self.anchor_in_buffer_unchecked(close_anchors.end)?)
-                .to_offset(self),
-        ))
+        let results =
+            self.map_excerpt_ranges(range, |buffer, excerpt_range, input_buffer_range| {
+                let filter = |open: Range<usize>, close: Range<usize>| -> bool {
+                    excerpt_range.context.start.0 <= open.start
+                        && close.end <= excerpt_range.context.end.0
+                        && range_filter.is_none_or(|filter| {
+                            filter(
+                                buffer,
+                                BufferOffset(open.start)..BufferOffset(close.end),
+                                BufferOffset(close.start)..BufferOffset(close.end),
+                            )
+                        })
+                };
+                let Some((open, close)) =
+                    buffer.innermost_enclosing_bracket_ranges(input_buffer_range, Some(&filter))
+                else {
+                    return Vec::new();
+                };
+                vec![
+                    (BufferOffset(open.start)..BufferOffset(open.end), ()),
+                    (BufferOffset(close.start)..BufferOffset(close.end), ()),
+                ]
+            })?;
+        let [(open, _), (close, _)] = results.try_into().ok()?;
+        Some((open, close))
     }
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
@@ -5585,37 +5676,32 @@ impl MultiBufferSnapshot {
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)> + '_>
-    {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let (buffer_snapshot, buffer_range) = self.anchor_range_to_buffer_anchor_range(
-            self.anchor_after(range.start)..self.anchor_before(range.end),
-        )?;
-        let (_, excerpt_range) = self.excerpt_containing2(range.clone())?;
-        let excerpt_buffer_range = excerpt_range.context.to_offset(&buffer_snapshot);
-
-        Some(
-            buffer_snapshot
-                .enclosing_bracket_ranges(buffer_range)
-                .filter_map(move |pair| {
-                    if excerpt_buffer_range.start <= pair.open_range.start
-                        && pair.close_range.end <= excerpt_buffer_range.end
-                    {
-                        let open_anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
-                        let close_anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
-                        Some((
-                            (self.anchor_in_buffer_unchecked(open_anchors.start)?
-                                ..self.anchor_in_buffer_unchecked(open_anchors.end)?)
-                                .to_offset(self),
-                            (self.anchor_in_buffer_unchecked(close_anchors.start)?
-                                ..self.anchor_in_buffer_unchecked(close_anchors.end)?)
-                                .to_offset(self),
-                        ))
-                    } else {
-                        None
-                    }
-                }),
-        )
+    ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)>> {
+        let results =
+            self.map_excerpt_ranges(range, |buffer, excerpt_range, input_buffer_range| {
+                buffer
+                    .enclosing_bracket_ranges(input_buffer_range)
+                    .filter(|pair| {
+                        excerpt_range.context.start.0 <= pair.open_range.start
+                            && pair.close_range.end <= excerpt_range.context.end.0
+                    })
+                    .flat_map(|pair| {
+                        [
+                            (
+                                BufferOffset(pair.open_range.start)
+                                    ..BufferOffset(pair.open_range.end),
+                                (),
+                            ),
+                            (
+                                BufferOffset(pair.close_range.start)
+                                    ..BufferOffset(pair.close_range.end),
+                                (),
+                            ),
+                        ]
+                    })
+                    .collect()
+            })?;
+        Some(results.into_iter().map(|(range, _)| range).tuples())
     }
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
@@ -5625,78 +5711,54 @@ impl MultiBufferSnapshot {
         range: Range<T>,
         options: TreeSitterOptions,
     ) -> impl Iterator<Item = (Range<MultiBufferOffset>, TextObject)> + '_ {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let range = self.anchor_after(range.start)..self.anchor_before(range.end);
-        maybe!({
-            let (buffer_snapshot, buffer_range) =
-                self.anchor_range_to_buffer_anchor_range(range.clone())?;
-            let (_, excerpt_range) = self.excerpt_containing2(range)?;
-            let excerpt_buffer_range = excerpt_range.context.to_offset(buffer_snapshot);
-            Some(
-                buffer_snapshot
-                    .text_object_ranges(buffer_range, options)
-                    .filter_map(move |(range, text_object)| {
-                        if excerpt_buffer_range.start <= range.start
-                            && range.end <= excerpt_buffer_range.end
-                        {
-                            let range_anchors = buffer_snapshot.anchor_range_inside(range);
-                            Some((
-                                (self.anchor_in_buffer_unchecked(range_anchors.start)?
-                                    ..self.anchor_in_buffer_unchecked(range_anchors.end)?)
-                                    .to_offset(self),
-                                text_object,
-                            ))
-                        } else {
-                            None
-                        }
-                    }),
-            )
+        self.map_excerpt_ranges(range, |buffer, excerpt_range, input_buffer_range| {
+            buffer
+                .text_object_ranges(input_buffer_range, options)
+                .filter(|(range, _)| {
+                    excerpt_range.context.start.0 <= range.start
+                        && range.end <= excerpt_range.context.end.0
+                })
+                .map(|(range, text_object)| {
+                    (
+                        BufferOffset(range.start)..BufferOffset(range.end),
+                        text_object,
+                    )
+                })
+                .collect()
         })
         .into_iter()
         .flatten()
     }
 
-    /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
-    /// not contained in a single excerpt
     pub fn bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)> + '_>
-    {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let range = self.anchor_after(range.start)..self.anchor_before(range.end);
-        let (buffer_snapshot, buffer_range) =
-            self.anchor_range_to_buffer_anchor_range(range.clone())?;
-        let (_, excerpt_range) = self.excerpt_containing2(range)?;
-        let excerpt_buffer_range = excerpt_range.context.to_offset(buffer_snapshot);
-        Some(
-            buffer_snapshot
-                .bracket_ranges(buffer_range)
-                .filter_map(move |pair| {
-                    let open_range = pair.open_range.start..pair.open_range.end;
-                    let close_range = pair.close_range.start..pair.close_range.end;
-                    if excerpt_buffer_range.start <= open_range.start
-                        && close_range.end <= excerpt_buffer_range.end
-                    {
-                        let open_anchors = buffer_snapshot.anchor_range_inside(open_range);
-                        let close_anchors = buffer_snapshot.anchor_range_inside(close_range);
-                        Some(BracketMatch {
-                            open_range: (self.anchor_in_buffer_unchecked(open_anchors.start)?
-                                ..self.anchor_in_buffer_unchecked(open_anchors.end)?)
-                                .to_offset(self),
-                            close_range: (self.anchor_in_buffer_unchecked(close_anchors.start)?
-                                ..self.anchor_in_buffer_unchecked(close_anchors.end)?)
-                                .to_offset(self),
-                            color_index: pair.color_index,
-                            newline_only: pair.newline_only,
-                            syntax_layer_depth: pair.syntax_layer_depth,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .map(BracketMatch::bracket_ranges),
-        )
+    ) -> Option<impl Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBufferOffset>)>> {
+        let results =
+            self.map_excerpt_ranges(range, |buffer, excerpt_range, input_buffer_range| {
+                buffer
+                    .bracket_ranges(input_buffer_range)
+                    .filter(|pair| {
+                        excerpt_range.context.start.0 <= pair.open_range.start
+                            && pair.close_range.end <= excerpt_range.context.end.0
+                    })
+                    .flat_map(|pair| {
+                        [
+                            (
+                                BufferOffset(pair.open_range.start)
+                                    ..BufferOffset(pair.open_range.end),
+                                (),
+                            ),
+                            (
+                                BufferOffset(pair.close_range.start)
+                                    ..BufferOffset(pair.close_range.end),
+                                (),
+                            ),
+                        ]
+                    })
+                    .collect()
+            })?;
+        Some(results.into_iter().map(|(range, _)| range).tuples())
     }
 
     pub fn redacted_ranges<'a, T: ToOffset>(
@@ -6237,23 +6299,19 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<(tree_sitter::Node<'_>, Range<MultiBufferOffset>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let (buffer_snapshot, buffer_range) = self.anchor_range_to_buffer_anchor_range(
-            self.anchor_after(range.start)..self.anchor_before(range.end),
-        )?;
-        let (_, excerpt_range) = self.excerpt_containing2(range.clone())?;
-        let excerpt_buffer_range = excerpt_range.context.to_offset(buffer_snapshot);
-        let node = buffer_snapshot.syntax_ancestor(buffer_range)?;
+        let (excerpt, excerpt_start, input_buffer_range) = self.excerpt_containing(range)?;
+        let buffer = excerpt.buffer_snapshot(self);
+        let excerpt_buffer_start =
+            BufferOffset(buffer.offset_for_anchor(&excerpt.range.context.start));
+        let excerpt_buffer_end = BufferOffset(buffer.offset_for_anchor(&excerpt.range.context.end));
+        let node = buffer.syntax_ancestor(input_buffer_range)?;
         let node_range = node.byte_range();
-        if excerpt_buffer_range.start <= node_range.start
-            && node_range.end <= excerpt_buffer_range.end
-        {
-            let node_anchors = buffer_snapshot.anchor_range_inside(node_range);
-            Some((
-                node,
-                (self.anchor_in_buffer_unchecked(node_anchors.start)?
-                    ..self.anchor_in_buffer_unchecked(node_anchors.end)?)
-                    .to_offset(self),
-            ))
+        if excerpt_buffer_start.0 <= node_range.start && node_range.end <= excerpt_buffer_end.0 {
+            let excerpt_offset_start = excerpt_start + (node_range.start - excerpt_buffer_start.0);
+            let excerpt_offset_end = excerpt_start + (node_range.end - excerpt_buffer_start.0);
+            let output_range =
+                self.excerpt_range_to_output_range(excerpt_offset_start..excerpt_offset_end);
+            Some((node, output_range))
         } else {
             None
         }
@@ -6343,6 +6401,7 @@ impl MultiBufferSnapshot {
     }
 
     pub(crate) fn path_key_index_for_buffer(&self, buffer_id: BufferId) -> Option<PathKeyIndex> {
+        dbg!(self.buffers.iter().map(|(k, _)| k).collect::<Vec<_>>());
         let snapshot = self.buffers.get(&buffer_id)?;
         Some(snapshot.path_key_index)
     }

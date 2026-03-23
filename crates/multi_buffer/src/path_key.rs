@@ -298,7 +298,7 @@ impl MultiBuffer {
         (inserted, path_key_index)
     }
 
-    fn get_or_create_path_key_index(&mut self, path_key: &PathKey) -> PathKeyIndex {
+    pub(crate) fn get_or_create_path_key_index(&mut self, path_key: &PathKey) -> PathKeyIndex {
         let mut snapshot = self.snapshot.borrow_mut();
         let existing = snapshot
             .path_keys_by_index

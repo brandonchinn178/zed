@@ -3218,6 +3218,9 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     .map(ExcerptRange::new)
                     .collect::<Vec<_>>();
                 let path = cx.update(|cx| PathKey::for_buffer(&excerpt_buffer, cx));
+                let path_key_index = multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer.get_or_create_path_key_index(&path)
+                });
 
                 multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer.set_excerpt_ranges_for_path(
@@ -3228,13 +3231,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         cx,
                     )
                 });
-                let path_key_index = multibuffer
-                    .read_with(cx, |multibuffer, cx| {
-                        multibuffer
-                            .snapshot(cx)
-                            .path_key_index_for_buffer(excerpt_buffer_snapshot.remote_id())
-                    })
-                    .unwrap();
 
                 cx.update(|cx| {
                     reference.set_excerpts(

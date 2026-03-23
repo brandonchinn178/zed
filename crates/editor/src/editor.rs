@@ -16795,19 +16795,25 @@ impl Editor {
         let new_selections = old_selections
             .iter()
             .map(|selection| {
-                let old_range = selection.range();
-                if let Some((buffer_snapshot, buffer_range)) =
-                    buffer.anchor_range_to_buffer_anchor_range(old_range)
-                    && let Some(node) =
-                        buffer_snapshot.syntax_next_sibling(buffer_range.to_offset(buffer_snapshot))
-                    && let Some(new_range) = {
-                        let anchors = buffer_snapshot.anchor_range_inside(node.byte_range());
-                        let start = buffer.anchor_in_buffer_unchecked(anchors.start);
-                        let end = buffer.anchor_in_buffer_unchecked(anchors.end);
-                        start.zip(end).map(|(s, e)| s..e)
-                    }
+                let old_range =
+                    selection.start.to_offset(&buffer)..selection.end.to_offset(&buffer);
+                if let Some(results) = buffer.map_excerpt_ranges(
+                    old_range,
+                    |buf, _excerpt_range, input_buffer_range| {
+                        let Some(node) = buf.syntax_next_sibling(input_buffer_range) else {
+                            return Vec::new();
+                        };
+                        vec![(
+                            BufferOffset(node.byte_range().start)
+                                ..BufferOffset(node.byte_range().end),
+                            (),
+                        )]
+                    },
+                ) && let [(new_range, _)] = results.as_slice()
                 {
                     selected_sibling = true;
+                    let new_range =
+                        buffer.anchor_after(new_range.start)..buffer.anchor_before(new_range.end);
                     Selection {
                         id: selection.id,
                         start: new_range.start,
@@ -16849,29 +16855,34 @@ impl Editor {
         let new_selections = old_selections
             .iter()
             .map(|selection| {
-                let Some((buffer, buffer_range)) =
-                    multibuffer_snapshot.anchor_range_to_buffer_anchor_range(selection.range())
-                else {
-                    return selection.clone();
-                };
-
-                let Some(node) = buffer.syntax_prev_sibling(buffer_range) else {
-                    return selection.clone();
-                };
-                let new_buffer_range = buffer.anchor_range_inside(
-                    BufferOffset(node.byte_range().start)..BufferOffset(node.byte_range().end),
-                );
-                let Some(new_range) = multibuffer_snapshot.anchor_range_in_buffer(new_buffer_range)
-                else {
-                    return selection.clone();
-                };
-                selected_sibling = true;
-                Selection {
-                    id: selection.id,
-                    start: new_range.start,
-                    end: new_range.end,
-                    goal: SelectionGoal::None,
-                    reversed: selection.reversed,
+                let old_range = selection.start.to_offset(&multibuffer_snapshot)
+                    ..selection.end.to_offset(&multibuffer_snapshot);
+                if let Some(results) = multibuffer_snapshot.map_excerpt_ranges(
+                    old_range,
+                    |buf, _excerpt_range, input_buffer_range| {
+                        let Some(node) = buf.syntax_prev_sibling(input_buffer_range) else {
+                            return Vec::new();
+                        };
+                        vec![(
+                            BufferOffset(node.byte_range().start)
+                                ..BufferOffset(node.byte_range().end),
+                            (),
+                        )]
+                    },
+                ) && let [(new_range, _)] = results.as_slice()
+                {
+                    selected_sibling = true;
+                    let new_range = multibuffer_snapshot.anchor_after(new_range.start)
+                        ..multibuffer_snapshot.anchor_before(new_range.end);
+                    Selection {
+                        id: selection.id,
+                        start: new_range.start,
+                        end: new_range.end,
+                        goal: SelectionGoal::None,
+                        reversed: selection.reversed,
+                    }
+                } else {
+                    selection.clone()
                 }
             })
             .collect::<Vec<_>>();
