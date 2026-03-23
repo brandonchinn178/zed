@@ -254,6 +254,24 @@ fn canonicalize_path_list(
     PathList::new(&canonical_paths)
 }
 
+/// Build an index of all threads keyed by their canonicalized `folder_paths`.
+///
+/// Each thread's raw `folder_paths` is mapped through `worktree_to_root` so
+/// that threads from different worktree checkouts of the same repos end up
+/// under the same canonical key.
+fn build_canonical_thread_index(
+    worktree_to_root: &HashMap<PathBuf, Arc<Path>>,
+    cx: &App,
+) -> HashMap<PathList, Vec<ThreadMetadata>> {
+    let store = SidebarThreadMetadataStore::global(cx).read(cx);
+    let mut index: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::default();
+    for entry in store.entries() {
+        let canonical = canonicalize_path_list(&entry.folder_paths, worktree_to_root);
+        index.entry(canonical).or_default().push(entry);
+    }
+    index
+}
+
 fn workspace_label_from_path_list(path_list: &PathList) -> SharedString {
     let mut names = Vec::with_capacity(path_list.paths().len());
     for abs_path in path_list.paths() {
@@ -800,18 +818,8 @@ impl Sidebar {
         // the root repo's sidebar header.
         let worktree_to_root = build_worktree_root_mapping(&workspaces, cx);
 
-        // Build a canonicalized thread index: for each thread in the store,
-        // map its folder_paths to root repo paths and index by the result.
         let thread_store = SidebarThreadMetadataStore::global(cx);
-        let canonical_threads: HashMap<PathList, Vec<ThreadMetadata>> = {
-            let store = thread_store.read(cx);
-            let mut index: HashMap<PathList, Vec<ThreadMetadata>> = HashMap::default();
-            for entry in store.entries() {
-                let canonical = canonicalize_path_list(&entry.folder_paths, &worktree_to_root);
-                index.entry(canonical).or_default().push(entry);
-            }
-            index
-        };
+        let canonical_threads = build_canonical_thread_index(&worktree_to_root, cx);
 
         let has_open_projects = workspaces
             .iter()
