@@ -55,7 +55,8 @@ use gpui::{
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
     PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
-    WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    WindowOptions, actions, canvas, deferred, hsla, linear_color_stop, linear_gradient, point,
+    relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -2167,7 +2168,7 @@ impl Workspace {
     }
 
     pub fn set_workspace_sidebar_open(
-        &self,
+        &mut self,
         open: bool,
         has_notifications: bool,
         show_toggle: bool,
@@ -7706,6 +7707,10 @@ impl Render for Workspace {
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let sidebar_open = window
+            .root::<MultiWorkspace>()
+            .flatten()
+            .is_some_and(|mw| mw.read(cx).sidebar_open());
 
         div()
             .relative()
@@ -8101,7 +8106,28 @@ impl Render for Workspace {
                                         }
                                     })
                                 }))
-                                .children(self.render_notifications(window, cx)),
+                                .children(self.render_notifications(window, cx))
+                                .when(sidebar_open, |this| {
+                                    this.child(deferred(
+                                        div()
+                                            .absolute()
+                                            .left_0()
+                                            .top_0()
+                                            .h_full()
+                                            .w_2p5()
+                                            .bg(linear_gradient(
+                                                90.,
+                                                linear_color_stop(
+                                                    hsla(0.0, 0.0, 0.0, 0.05),
+                                                    0.,
+                                                ),
+                                                linear_color_stop(
+                                                    hsla(0.0, 0.0, 0.0, 0.0),
+                                                    1.,
+                                                ),
+                                            )),
+                                    ))
+                                }),
                         )
                         .when(self.status_bar_visible(cx), |parent| {
                             parent.child(self.status_bar.clone())
