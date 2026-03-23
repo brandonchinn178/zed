@@ -4062,7 +4062,6 @@ impl MultiBufferSnapshot {
         self.singleton
     }
 
-    // todo!() should probably return just the buffer
     pub fn as_singleton(&self) -> Option<&BufferSnapshot> {
         if self.is_singleton() {
             Some(self.excerpts.first()?.buffer_snapshot(&self))
@@ -5253,16 +5252,11 @@ impl MultiBufferSnapshot {
         None
     }
 
-    /// Lifts a buffer range to a multibuffer range, when the buffer is already known to exist in the multibuffer,
-    /// without checking the buffer range boundaries against excerpts. Returns `None` if there are no excerpts for the buffer
+    /// Lifts a buffer anchor to a multibuffer anchor without checking against excerpt boundaries. Returns `None` if there are no excerpts for the buffer
     // FIXME name
-    pub fn anchor_range_in_buffer_unchecked(
-        &self,
-        range: Range<text::Anchor>,
-    ) -> Option<Range<Anchor>> {
-        assert_eq!(range.start.buffer_id, range.end.buffer_id);
-        let path_key_index = self.path_key_index_for_buffer(range.start.buffer_id)?;
-        Some(Anchor::range_in_buffer(path_key_index, range))
+    pub fn anchor_in_buffer_unchecked(&self, anchor: text::Anchor) -> Option<Anchor> {
+        let path_key_index = self.path_key_index_for_buffer(anchor.buffer_id)?;
+        Some(Anchor::in_buffer(path_key_index, anchor))
     }
 
     /// Creates a multibuffer anchor range for the given buffer anchor range, if any excerpt contains both endpoints. The resulting range may contain deleted hunks
@@ -5579,10 +5573,14 @@ impl MultiBufferSnapshot {
         let (open, close) = buffer_snapshot
             .innermost_enclosing_bracket_ranges(buffer_range, Some(&range_filter))?;
 
+        let open_anchors = buffer_snapshot.anchor_range_inside(open);
+        let close_anchors = buffer_snapshot.anchor_range_inside(close);
         Some((
-            self.anchor_range_in_buffer_unchecked(buffer_snapshot.anchor_range_inside(open))?
+            (self.anchor_in_buffer_unchecked(open_anchors.start)?
+                ..self.anchor_in_buffer_unchecked(open_anchors.end)?)
                 .to_offset(self),
-            self.anchor_range_in_buffer_unchecked(buffer_snapshot.anchor_range_inside(close))?
+            (self.anchor_in_buffer_unchecked(close_anchors.start)?
+                ..self.anchor_in_buffer_unchecked(close_anchors.end)?)
                 .to_offset(self),
         ))
     }
@@ -5608,15 +5606,15 @@ impl MultiBufferSnapshot {
                     if excerpt_buffer_range.start <= pair.open_range.start
                         && pair.close_range.end <= excerpt_buffer_range.end
                     {
+                        let open_anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
+                        let close_anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
                         Some((
-                            self.anchor_range_in_buffer_unchecked(
-                                buffer_snapshot.anchor_range_inside(pair.open_range),
-                            )?
-                            .to_offset(self),
-                            self.anchor_range_in_buffer_unchecked(
-                                buffer_snapshot.anchor_range_inside(pair.close_range),
-                            )?
-                            .to_offset(self),
+                            (self.anchor_in_buffer_unchecked(open_anchors.start)?
+                                ..self.anchor_in_buffer_unchecked(open_anchors.end)?)
+                                .to_offset(self),
+                            (self.anchor_in_buffer_unchecked(close_anchors.start)?
+                                ..self.anchor_in_buffer_unchecked(close_anchors.end)?)
+                                .to_offset(self),
                         ))
                     } else {
                         None
@@ -5646,11 +5644,11 @@ impl MultiBufferSnapshot {
                         if excerpt_buffer_range.start <= range.start
                             && range.end <= excerpt_buffer_range.end
                         {
+                            let range_anchors = buffer_snapshot.anchor_range_inside(range);
                             Some((
-                                self.anchor_range_in_buffer_unchecked(
-                                    buffer_snapshot.anchor_range_inside(range),
-                                )?
-                                .to_offset(self),
+                                (self.anchor_in_buffer_unchecked(range_anchors.start)?
+                                    ..self.anchor_in_buffer_unchecked(range_anchors.end)?)
+                                    .to_offset(self),
                                 text_object,
                             ))
                         } else {
@@ -5685,16 +5683,14 @@ impl MultiBufferSnapshot {
                     if excerpt_buffer_range.start <= open_range.start
                         && close_range.end <= excerpt_buffer_range.end
                     {
+                        let open_anchors = buffer_snapshot.anchor_range_inside(open_range);
+                        let close_anchors = buffer_snapshot.anchor_range_inside(close_range);
                         Some(BracketMatch {
-                            open_range: self
-                                .anchor_range_in_buffer_unchecked(
-                                    buffer_snapshot.anchor_range_inside(open_range),
-                                )?
+                            open_range: (self.anchor_in_buffer_unchecked(open_anchors.start)?
+                                ..self.anchor_in_buffer_unchecked(open_anchors.end)?)
                                 .to_offset(self),
-                            close_range: self
-                                .anchor_range_in_buffer_unchecked(
-                                    buffer_snapshot.anchor_range_inside(close_range),
-                                )?
+                            close_range: (self.anchor_in_buffer_unchecked(close_anchors.start)?
+                                ..self.anchor_in_buffer_unchecked(close_anchors.end)?)
                                 .to_offset(self),
                             color_index: pair.color_index,
                             newline_only: pair.newline_only,
@@ -6256,12 +6252,12 @@ impl MultiBufferSnapshot {
         if excerpt_buffer_range.start <= node_range.start
             && node_range.end <= excerpt_buffer_range.end
         {
+            let node_anchors = buffer_snapshot.anchor_range_inside(node_range);
             Some((
                 node,
-                self.anchor_range_in_buffer_unchecked(
-                    buffer_snapshot.anchor_range_inside(node_range),
-                )?
-                .to_offset(self),
+                (self.anchor_in_buffer_unchecked(node_anchors.start)?
+                    ..self.anchor_in_buffer_unchecked(node_anchors.end)?)
+                    .to_offset(self),
             ))
         } else {
             None
@@ -6660,13 +6656,6 @@ impl MultiBufferSnapshot {
         head: Anchor,
     ) -> Option<(&BufferSnapshot, ExcerptRange<text::Anchor>)> {
         self.excerpt_containing2(head..head)
-    }
-
-    pub fn excerpt_for_buffer_position(
-        &self,
-        start: text::Anchor,
-    ) -> Option<(&BufferSnapshot, ExcerptRange<text::Anchor>)> {
-        todo!()
     }
 
     /// Returns all nonempty intersections of the given buffer range with excerpts in the multibuffer in order

@@ -251,9 +251,10 @@ where
 
         let buffer_point_range = source_range.to_point(&buffer_snapshot);
         let Some((_, source_excerpt_range)) = source_snapshot
-            .excerpt_for_buffer_position(buffer_snapshot.anchor_after(source_range.start))
+            .anchor_in_buffer_unchecked(buffer_snapshot.anchor_after(source_range.start))
+            .and_then(|anchor| source_snapshot.excerpt_for_position(anchor))
         else {
-            todo!()
+            continue;
         };
         let source_context_range = source_excerpt_range.context.to_point(&buffer_snapshot);
 
@@ -291,16 +292,22 @@ fn patch_for_excerpt(
     let source_buffer_range = source_excerpt_range
         .context
         .to_point(source_buffer_snapshot);
-    let source_multibuffer_range = source_snapshot
-        .anchor_range_in_buffer_unchecked(source_excerpt_range.context)
+    let source_multibuffer_range = (source_snapshot
+        .anchor_in_buffer_unchecked(source_excerpt_range.context.start)
         .expect("buffer should exist in multibuffer")
+        ..source_snapshot
+            .anchor_in_buffer_unchecked(source_excerpt_range.context.end)
+            .expect("buffer should exist in multibuffer"))
         .to_point(source_snapshot);
     let target_buffer_range = target_excerpt_range
         .context
         .to_point(target_buffer_snapshot);
-    let target_multibuffer_range = target_snapshot
-        .anchor_range_in_buffer_unchecked(target_excerpt_range.context)
+    let target_multibuffer_range = (target_snapshot
+        .anchor_in_buffer_unchecked(target_excerpt_range.context.start)
         .expect("buffer should exist in multibuffer")
+        ..target_snapshot
+            .anchor_in_buffer_unchecked(target_excerpt_range.context.end)
+            .expect("buffer should exist in multibuffer"))
         .to_point(target_snapshot);
 
     let edits = patch

@@ -604,8 +604,10 @@ impl ProjectDiff {
             selection = false;
             let anchor = editor.selections.newest_anchor().head();
             if let Some((_, excerpt_range)) = snapshot.excerpt_for_position(anchor)
-                && let Some(range) =
-                    snapshot.anchor_range_in_buffer_unchecked(excerpt_range.context)
+                && let Some(range) = snapshot
+                    .anchor_in_buffer_unchecked(excerpt_range.context.start)
+                    .zip(snapshot.anchor_in_buffer_unchecked(excerpt_range.context.end))
+                    .map(|(start, end)| start..end)
             {
                 ranges = vec![range];
             } else {
@@ -907,10 +909,26 @@ impl ProjectDiff {
         Ok(())
     }
 
-    // FIXME remove seems useless
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
-        todo!()
+        let snapshot = self
+            .editor()
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx);
+        snapshot
+            .excerpts()
+            .map(|excerpt| {
+                snapshot
+                    .path_for_buffer(excerpt.context.start.buffer_id)
+                    .unwrap()
+                    .path
+                    .clone()
+            })
+            .collect()
     }
 }
 

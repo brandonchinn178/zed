@@ -446,11 +446,13 @@ impl InlineAssistant {
             .iter()
             .flat_map(|selection| snapshot.range_to_buffer_ranges(selection.start..selection.end))
         {
-            let Some(anchor_range) = snapshot.anchor_range_in_buffer_unchecked(
-                buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
+            let (Some(start), Some(end)) = (
+                snapshot.anchor_in_buffer_unchecked(buffer.anchor_before(buffer_range.start)),
+                snapshot.anchor_in_buffer_unchecked(buffer.anchor_after(buffer_range.end)),
             ) else {
                 continue;
             };
+            let anchor_range = start..end;
 
             codegen_ranges.push(anchor_range);
 

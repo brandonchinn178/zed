@@ -1266,7 +1266,8 @@ impl BlockMap {
         );
         // FIXME hack hack hack
         if let Some(patch) = patches.last()
-            && let Bound::Excluded(..) = bounds.1
+            && let Bound::Excluded(end) = bounds.1
+            && end == wrap_snapshot.buffer().max_point()
             && patch.source_excerpt_range.is_empty()
         {
             patches.pop();

@@ -41,9 +41,12 @@ impl Editor {
                         .entry(buffer_snapshot.remote_id())
                         .or_default();
 
-                    let Some((_, excerpt)) = multi_buffer_snapshot.excerpt_for_buffer_position(
-                        buffer_snapshot.anchor_after(buffer_range.start),
-                    ) else {
+                    let Some((_, excerpt)) = multi_buffer_snapshot
+                        .anchor_in_buffer_unchecked(
+                            buffer_snapshot.anchor_after(buffer_range.start),
+                        )
+                        .and_then(|anchor| multi_buffer_snapshot.excerpt_for_position(anchor))
+                    else {
                         return acc;
                     };
                     let context = excerpt.context.to_offset(&buffer_snapshot);
@@ -64,8 +67,12 @@ impl Editor {
                             let buffer_open_range = if context.start <= pair.open_range.start
                                 && pair.open_range.end <= context.end
                             {
-                                multi_buffer_snapshot.anchor_range_in_buffer_unchecked(
-                                    buffer_snapshot.anchor_range_inside(pair.open_range),
+                                let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
+                                Some(
+                                    multi_buffer_snapshot
+                                        .anchor_in_buffer_unchecked(anchors.start)?
+                                        ..multi_buffer_snapshot
+                                            .anchor_in_buffer_unchecked(anchors.end)?,
                                 )
                             } else {
                                 None
@@ -74,8 +81,12 @@ impl Editor {
                             let buffer_close_range = if context.start <= pair.close_range.start
                                 && pair.close_range.end <= context.end
                             {
-                                multi_buffer_snapshot.anchor_range_in_buffer_unchecked(
-                                    buffer_snapshot.anchor_range_inside(pair.close_range),
+                                let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
+                                Some(
+                                    multi_buffer_snapshot
+                                        .anchor_in_buffer_unchecked(anchors.start)?
+                                        ..multi_buffer_snapshot
+                                            .anchor_in_buffer_unchecked(anchors.end)?,
                                 )
                             } else {
                                 None

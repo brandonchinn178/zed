@@ -7578,9 +7578,15 @@ impl Editor {
                                     .anchor_after(search_range.start + match_range.start);
                                 let match_end = buffer_snapshot
                                     .anchor_before(search_range.start + match_range.end);
-                                multi_buffer_snapshot
-                                    .anchor_range_in_buffer_unchecked(match_start..match_end)
-                                    .filter(|match_anchor_range| match_anchor_range != &query_range)
+                                {
+                                    let range = multi_buffer_snapshot
+                                        .anchor_in_buffer_unchecked(match_start)?
+                                        ..multi_buffer_snapshot
+                                            .anchor_in_buffer_unchecked(match_end)?;
+                                    Some(range).filter(|match_anchor_range| {
+                                        match_anchor_range != &query_range
+                                    })
+                                }
                             }),
                     );
                 }
@@ -16781,9 +16787,12 @@ impl Editor {
                     buffer.anchor_range_to_buffer_anchor_range(old_range)
                     && let Some(node) =
                         buffer_snapshot.syntax_next_sibling(buffer_range.to_offset(buffer_snapshot))
-                    && let Some(new_range) = buffer.anchor_range_in_buffer_unchecked(
-                        buffer_snapshot.anchor_range_inside(node.byte_range()),
-                    )
+                    && let Some(new_range) = {
+                        let anchors = buffer_snapshot.anchor_range_inside(node.byte_range());
+                        let start = buffer.anchor_in_buffer_unchecked(anchors.start);
+                        let end = buffer.anchor_in_buffer_unchecked(anchors.end);
+                        start.zip(end).map(|(s, e)| s..e)
+                    }
                 {
                     selected_sibling = true;
                     Selection {

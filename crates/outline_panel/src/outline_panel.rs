@@ -4378,11 +4378,13 @@ impl OutlinePanel {
             let editor = active_editor.read(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             if !related_excerpts.iter().any(|excerpt| {
-                let Some(excerpt_range) =
-                    snapshot.anchor_range_in_buffer_unchecked(excerpt.context.clone())
-                else {
+                let (Some(start), Some(end)) = (
+                    snapshot.anchor_in_buffer_unchecked(excerpt.context.start),
+                    snapshot.anchor_in_buffer_unchecked(excerpt.context.end),
+                ) else {
                     return false;
                 };
+                let excerpt_range = start..end;
                 excerpt_range.overlaps(match_range, &snapshot)
             }) {
                 return false;
