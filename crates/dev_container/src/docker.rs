@@ -3,12 +3,15 @@ use std::{collections::HashMap, path::PathBuf};
 use serde::{Deserialize, Deserializer, Serialize};
 use smol::process::Command;
 
-use crate::{command_json::evaluate_json_command, devcontainer_api::DevContainerError};
+use crate::{
+    command_json::evaluate_json_command, devcontainer_api::DevContainerError,
+    devcontainer_json::MountDefinition,
+};
 
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerPs {
-    #[serde(rename = "ID")]
+    #[serde(alias = "ID")]
     pub(crate) id: String,
 }
 
@@ -45,81 +48,215 @@ pub(crate) struct DockerInspectMount {
     pub(crate) destination: String,
 }
 
-pub(crate) async fn pull_image(image: &String) -> Result<(), DevContainerError> {
-    let mut command = smol::process::Command::new(docker_cli());
-    command.args(&["pull", image]);
-
-    let output = command.output().await.map_err(|e| {
-        log::error!("Error pulling image: {e}");
-        DevContainerError::ResourceFetchFailed
-    })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!("Non-success result from docker pull: {stderr}");
-        return Err(DevContainerError::ResourceFetchFailed);
-    }
-    Ok(())
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+pub(crate) struct DockerComposeServiceBuild {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) dockerfile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) args: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) additional_contexts: Option<HashMap<String, String>>, // TODO you gotta address this when you reformat feature stuff
 }
 
-pub(crate) async fn inspect_image(image: &String) -> Result<DockerInspect, DevContainerError> {
-    // Try to pull the image, continue on failure; Image may be local only, or network unavailable
-    pull_image(image).await.ok();
-
-    let command = create_docker_inspect(image);
-
-    let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await? else {
-        log::error!("Docker inspect produced no deserializable output");
-        return Err(DevContainerError::CommandFailed("docker".to_string()));
-    };
-    Ok(docker_inspect)
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+pub(crate) struct DockerComposeService {
+    pub(crate) image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) entrypoint: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) cap_add: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) security_opt: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) build: Option<DockerComposeServiceBuild>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) privileged: Option<bool>,
+    pub(crate) volumes: Vec<MountDefinition>,
 }
 
-pub(crate) async fn run_docker_exec(
-    container_id: &str,
-    remote_folder: &str,
-    user: &str,
-    env: &HashMap<String, String>,
-    inner_command: Command,
-) -> Result<(), DevContainerError> {
-    dbg!(&inner_command);
-    let mut command = Command::new(docker_cli());
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+pub(crate) struct DockerComposeVolume {
+    pub(crate) name: String,
+}
 
-    command.args(&["exec", "-w", remote_folder, "-u", user]);
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+pub(crate) struct DockerComposeConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+    pub(crate) services: HashMap<String, DockerComposeService>,
+    pub(crate) volumes: HashMap<String, DockerComposeVolume>,
+}
 
-    for (k, v) in env.iter() {
-        command.arg("-e");
-        let env_declaration = format!("{}={}", k, v);
-        command.arg(&env_declaration);
+pub(crate) struct Docker {
+    docker_cli: String,
+}
+
+impl Docker {
+    pub(crate) fn new(docker_cli: &str) -> Self {
+        Self {
+            docker_cli: docker_cli.to_string(),
+        }
     }
 
-    command.arg(container_id);
-
-    command.arg("sh");
-
-    let mut inner_program_script: Vec<String> =
-        vec![inner_command.get_program().display().to_string()];
-    let mut args: Vec<String> = inner_command
-        .get_args()
-        .map(|arg| arg.display().to_string())
-        .collect();
-    inner_program_script.append(&mut args);
-    command.args(&["-c", &inner_program_script.join(" ")]);
-
-    dbg!(&command);
-
-    let output = command.output().await.map_err(|e| {
-        log::error!("Error running command {e} in container exec");
-        DevContainerError::ContainerNotValid(container_id.to_string())
-    })?;
-    if !output.status.success() {
-        let std_err = String::from_utf8_lossy(&output.stderr);
-        log::error!("Command produced a non-successful output. StdErr: {std_err}");
+    /// This operates as an escape hatch for more custom uses of the docker API. See DevContainerManifest::create_docker_build as an example
+    pub(crate) fn docker_cli(&self) -> String {
+        self.docker_cli.clone()
     }
-    let std_out = String::from_utf8_lossy(&output.stdout);
-    log::info!("Command output:\n {std_out}");
 
-    Ok(())
+    pub(crate) async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
+        let mut command = smol::process::Command::new(&self.docker_cli);
+        command.args(&["pull", image]);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error pulling image: {e}");
+            DevContainerError::ResourceFetchFailed
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success result from docker pull: {stderr}");
+            return Err(DevContainerError::ResourceFetchFailed);
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn inspect_image(
+        &self,
+        image: &String,
+    ) -> Result<DockerInspect, DevContainerError> {
+        // Try to pull the image, continue on failure; Image may be local only, or network unavailable
+        self.pull_image(image).await.ok();
+
+        let command = self.create_docker_inspect(image);
+
+        let Some(docker_inspect): Option<DockerInspect> = evaluate_json_command(command).await?
+        else {
+            log::error!("Docker inspect produced no deserializable output");
+            return Err(DevContainerError::CommandFailed(self.docker_cli.clone()));
+        };
+        Ok(docker_inspect)
+    }
+
+    pub(crate) async fn run_docker_exec(
+        &self,
+        container_id: &str,
+        remote_folder: &str,
+        user: &str,
+        env: &HashMap<String, String>,
+        inner_command: Command,
+    ) -> Result<(), DevContainerError> {
+        let mut command = Command::new(&self.docker_cli);
+
+        command.args(&["exec", "-w", remote_folder, "-u", user]);
+
+        for (k, v) in env.iter() {
+            command.arg("-e");
+            let env_declaration = format!("{}={}", k, v);
+            command.arg(&env_declaration);
+        }
+
+        command.arg(container_id);
+
+        command.arg("sh");
+
+        let mut inner_program_script: Vec<String> =
+            vec![inner_command.get_program().display().to_string()];
+        let mut args: Vec<String> = inner_command
+            .get_args()
+            .map(|arg| arg.display().to_string())
+            .collect();
+        inner_program_script.append(&mut args);
+        command.args(&["-c", &inner_program_script.join(" ")]);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running command {e} in container exec");
+            DevContainerError::ContainerNotValid(container_id.to_string())
+        })?;
+        if !output.status.success() {
+            let std_err = String::from_utf8_lossy(&output.stderr);
+            log::error!("Command produced a non-successful output. StdErr: {std_err}");
+        }
+        let std_out = String::from_utf8_lossy(&output.stdout);
+        log::info!("Command output:\n {std_out}");
+
+        Ok(())
+    }
+
+    pub(crate) async fn find_process_by_filters(
+        &self,
+        filters: Vec<String>,
+    ) -> Result<Option<DockerPs>, DevContainerError> {
+        let command = self.create_docker_query_containers(filters);
+        evaluate_json_command(command).await
+    }
+
+    fn create_docker_query_containers(&self, filters: Vec<String>) -> Command {
+        let mut command = smol::process::Command::new(&self.docker_cli);
+        command.args(&["ps", "-a"]);
+
+        for filter in filters {
+            command.arg("--filter");
+            command.arg(filter);
+        }
+        command.arg("--format={{ json . }}");
+        command
+    }
+
+    fn create_docker_inspect(&self, id: &str) -> Command {
+        let mut command = smol::process::Command::new(&self.docker_cli);
+        command.args(&["inspect", "--format={{json . }}", id]);
+        command
+    }
+
+    pub(crate) async fn get_docker_compose_config(
+        &self,
+        config_files: &Vec<PathBuf>,
+    ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
+        let command = self.create_docker_compose_config_command(config_files);
+        evaluate_json_command(command).await
+    }
+
+    fn create_docker_compose_config_command(&self, config_files: &Vec<PathBuf>) -> Command {
+        let mut command = smol::process::Command::new(&self.docker_cli);
+        command.arg("compose");
+        for file_path in config_files {
+            command.args(&["-f", &file_path.display().to_string()]);
+        }
+        command.args(&["config", "--format", "json"]);
+        command
+    }
+
+    pub(crate) async fn docker_compose_build(
+        &self,
+        config_files: &Vec<PathBuf>,
+        project_name: &str,
+    ) -> Result<(), DevContainerError> {
+        let mut command = Command::new(&self.docker_cli);
+        command.args(&["compose", "--project-name", project_name]);
+        for docker_compose_file in config_files {
+            command.args(&["-f", &docker_compose_file.display().to_string()]);
+        }
+        command.arg("build");
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running docker compose up: {e}");
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker compose up: {}", stderr);
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 fn deserialize_metadata<'de, D>(
@@ -142,19 +279,7 @@ where
     }
 }
 
-// I can avoid making this public, right?
-fn create_docker_inspect(id: &str) -> Command {
-    let mut command = smol::process::Command::new(docker_cli());
-    command.args(&["inspect", "--format={{json . }}", id]);
-    command
-}
-
-// TODO podman
-pub(crate) fn docker_cli() -> &'static str {
-    "docker"
-}
-
-// Ok this needs some work, because we should be able to find a mount that works as an ancestor to this remote dir
+// TODO this needs some work, because we should be able to find a mount that works as an ancestor to this remote dir
 // E.g. it might be /Source/myproject:workspaces/myproject
 // But it might also be Source/:workspaces/
 // In the latter case, we want to found that mount destination (e.g. workspaces/), and fill in the rest of the path to the workspace (so that it's workspaces/myproject)
@@ -199,14 +324,15 @@ mod test {
 
     use crate::{
         command_json::deserialize_json_output,
-        docker::{DockerInspect, DockerPs, create_docker_inspect, get_remote_dir_from_config},
+        docker::{Docker, DockerInspect, DockerPs, get_remote_dir_from_config},
     };
 
     #[test]
     fn should_create_docker_inspect_command() {
+        let docker = Docker::new("docker");
         let given_id = "given_docker_id";
 
-        let command = create_docker_inspect(given_id);
+        let command = docker.create_docker_inspect(given_id);
 
         assert_eq!(
             command.get_args().collect::<Vec<&OsStr>>(),
@@ -239,6 +365,40 @@ mod test {
         "Command": "\"/bin/sh -c 'echo Co…\"",
         "CreatedAt": "2026-02-04 15:44:21 -0800 PST",
         "ID": "abdb6ab59573",
+        "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+        "Labels": "desktop.docker.io/mounts/0/Source=/somepath/cli,desktop.docker.io/mounts/0/SourceKind=hostFile,desktop.docker.io/mounts/0/Target=/workspaces/cli,desktop.docker.io/ports.scheme=v2,dev.containers.features=common,dev.containers.id=base-ubuntu,dev.containers.release=v0.4.24,dev.containers.source=https://github.com/devcontainers/images,dev.containers.timestamp=Fri, 30 Jan 2026 16:52:34 GMT,dev.containers.variant=noble,devcontainer.config_file=/somepath/cli/.devcontainer/dev_container_2/devcontainer.json,devcontainer.local_folder=/somepath/cli,devcontainer.metadata=[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}],org.opencontainers.image.ref.name=ubuntu,org.opencontainers.image.version=24.04,version=2.1.6",
+        "LocalVolumes": "0",
+        "Mounts": "/host_mnt/User…",
+        "Names": "objective_haslett",
+        "Networks": "bridge",
+        "Platform": {
+        "architecture": "arm64",
+        "os": "linux"
+        },
+        "Ports": "",
+        "RunningFor": "47 hours ago",
+        "Size": "0B",
+        "State": "running",
+        "Status": "Up 47 hours"
+    }
+                    "#).into_bytes(),
+            };
+
+        let result: Option<DockerPs> = deserialize_json_output(full_output).unwrap();
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.id, "abdb6ab59573".to_string());
+
+        // Podman variant (Id, not ID)
+        let full_output = Output {
+                status: ExitStatus::default(),
+                stderr: vec![],
+                stdout: String::from(r#"
+    {
+        "Command": "\"/bin/sh -c 'echo Co…\"",
+        "CreatedAt": "2026-02-04 15:44:21 -0800 PST",
+        "Id": "abdb6ab59573",
         "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
         "Labels": "desktop.docker.io/mounts/0/Source=/somepath/cli,desktop.docker.io/mounts/0/SourceKind=hostFile,desktop.docker.io/mounts/0/Target=/workspaces/cli,desktop.docker.io/ports.scheme=v2,dev.containers.features=common,dev.containers.id=base-ubuntu,dev.containers.release=v0.4.24,dev.containers.source=https://github.com/devcontainers/images,dev.containers.timestamp=Fri, 30 Jan 2026 16:52:34 GMT,dev.containers.variant=noble,devcontainer.config_file=/somepath/cli/.devcontainer/dev_container_2/devcontainer.json,devcontainer.local_folder=/somepath/cli,devcontainer.metadata=[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}],org.opencontainers.image.ref.name=ubuntu,org.opencontainers.image.version=24.04,version=2.1.6",
         "LocalVolumes": "0",

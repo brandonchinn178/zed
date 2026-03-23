@@ -28,7 +28,7 @@ where
 {
     if output.status.success() {
         let raw = String::from_utf8_lossy(&output.stdout);
-        if raw.is_empty() {
+        if raw.is_empty() || raw.trim() == "[]" || raw.trim() == "{}"  {
             return Ok(None);
         }
         let value = serde_json_lenient::from_str(&raw)
