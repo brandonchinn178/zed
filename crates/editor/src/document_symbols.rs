@@ -135,9 +135,9 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
+            .visible_buffers(cx)
             .into_iter()
-            .filter_map(|(buffer, _, _)| {
+            .filter_map(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
                     && lsp_symbols_enabled(buffer.read(cx), cx)

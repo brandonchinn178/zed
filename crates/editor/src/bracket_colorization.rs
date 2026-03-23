@@ -25,10 +25,9 @@ impl Editor {
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
-        let bracket_matches_by_accent = self.visible_excerpts(false, cx).into_iter().fold(
+        let bracket_matches_by_accent = self.visible_buffer_ranges(cx).into_iter().fold(
             HashMap::default(),
-            |mut acc, (buffer, _, buffer_range)| {
-                let buffer_snapshot = buffer.read(cx).snapshot();
+            |mut acc, (buffer_snapshot, buffer_range)| {
                 if language_settings::language_settings(
                     buffer_snapshot.language().map(|language| language.name()),
                     buffer_snapshot.file(),

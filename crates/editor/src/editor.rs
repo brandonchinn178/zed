@@ -5765,40 +5765,34 @@ impl Editor {
         }
     }
 
-    // todo!() reconsider signature
-    pub fn visible_excerpts(
+    fn visible_multi_buffer_range(
         &self,
-        lsp_related_only: bool,
         cx: &mut Context<Editor>,
-    ) -> Vec<(Entity<Buffer>, clock::Global, Range<usize>)> {
-        let project = self.project().cloned();
+    ) -> (Range<Point>, MultiBufferSnapshot) {
         let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let multi_buffer = self.buffer().read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let multi_buffer_visible_start = self
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let start = self
             .scroll_manager
             .native_anchor(&display_snapshot, cx)
             .anchor
             .to_point(&multi_buffer_snapshot);
-        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
-            multi_buffer_visible_start
-                + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
+        let end = multi_buffer_snapshot.clip_point(
+            start + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
             Bias::Left,
         );
+        (start..end, multi_buffer_snapshot)
+    }
+
+    pub fn visible_buffers(&self, cx: &mut Context<Editor>) -> Vec<Entity<Buffer>> {
+        let project = self.project().cloned();
+        let (visible_range, multi_buffer_snapshot) = self.visible_multi_buffer_range(cx);
+        let multi_buffer = self.buffer().read(cx);
         multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
+            .range_to_buffer_ranges(visible_range)
             .into_iter()
             .filter(|(_, excerpt_visible_range)| !excerpt_visible_range.is_empty())
-            .filter_map(|(buffer, excerpt_visible_range)| {
+            .filter_map(|(buffer, _)| {
                 let buffer_entity = multi_buffer.buffer(buffer.remote_id())?;
-                if !lsp_related_only {
-                    return Some((
-                        buffer_entity,
-                        buffer.version().clone(),
-                        excerpt_visible_range.start.0..excerpt_visible_range.end.0,
-                    ));
-                }
-
                 let project = project.as_ref()?.read(cx);
                 let buffer_file = project::File::from_dyn(buffer.file())?;
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
@@ -5808,12 +5802,26 @@ impl Editor {
                 if worktree_entry.is_ignored {
                     None
                 } else {
-                    Some((
-                        buffer_entity,
-                        buffer.version().clone(),
-                        excerpt_visible_range.start.0..excerpt_visible_range.end.0,
-                    ))
+                    Some(buffer_entity)
                 }
+            })
+            .collect()
+    }
+
+    pub fn visible_buffer_ranges(
+        &self,
+        cx: &mut Context<Editor>,
+    ) -> Vec<(BufferSnapshot, Range<usize>)> {
+        let (visible_range, multi_buffer_snapshot) = self.visible_multi_buffer_range(cx);
+        multi_buffer_snapshot
+            .range_to_buffer_ranges(visible_range)
+            .into_iter()
+            .filter(|(_, excerpt_visible_range)| !excerpt_visible_range.is_empty())
+            .map(|(buffer, excerpt_visible_range)| {
+                (
+                    buffer,
+                    excerpt_visible_range.start.0..excerpt_visible_range.end.0,
+                )
             })
             .collect()
     }
@@ -25444,7 +25452,7 @@ impl Editor {
         if !self.mode().is_full() {
             return;
         }
-        for (visible_buffer, _, _) in self.visible_excerpts(true, cx) {
+        for visible_buffer in self.visible_buffers(cx) {
             self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
         }
     }

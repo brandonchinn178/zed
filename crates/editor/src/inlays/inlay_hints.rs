@@ -293,7 +293,7 @@ impl Editor {
             }),
         };
 
-        let mut visible_excerpts = self.visible_excerpts(true, cx);
+        let mut visible_excerpts = self.visible_buffer_ranges(cx);
 
         let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
@@ -330,8 +330,8 @@ impl Editor {
                 );
 
                 semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
-                visible_excerpts.retain(|(visible_buffer, _, _)| {
-                    visible_buffer.read(cx).language() == Some(&affected_language)
+                visible_excerpts.retain(|(buffer_snapshot, _)| {
+                    buffer_snapshot.language() == Some(&affected_language)
                 });
                 false
             }
@@ -350,14 +350,18 @@ impl Editor {
             .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
-        for (buffer, buffer_version, visible_range) in visible_excerpts {
-            let buffer_id = buffer.read(cx).remote_id();
+        for (buffer_snapshot, visible_range) in visible_excerpts {
+            let buffer_id = buffer_snapshot.remote_id();
 
             if !self.registered_buffers.contains_key(&buffer_id) {
                 continue;
             }
 
-            let buffer_snapshot = buffer.read(cx).snapshot();
+            let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+
+            let buffer_version = buffer_snapshot.version().clone();
             let buffer_anchor_range = buffer_snapshot.anchor_before(visible_range.start)
                 ..buffer_snapshot.anchor_after(visible_range.end);
 
@@ -2248,17 +2252,15 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| editor.visible_excerpts(true, cx))
+            .update(cx, |editor, _window, cx| editor.visible_buffer_ranges(cx))
             .unwrap();
         assert_eq!(
             ranges.len(),
             1,
             "Single buffer should produce a single excerpt with visible range"
         );
-        let (excerpt_buffer, _, excerpt_visible_range) = ranges.into_iter().next().unwrap();
-        excerpt_buffer.read_with(cx, |buffer, _| {
-            excerpt_visible_range.to_point(&buffer.snapshot())
-        })
+        let (buffer_snapshot, visible_range) = ranges.into_iter().next().unwrap();
+        visible_range.to_point(&buffer_snapshot)
     }
 
     #[gpui::test]
