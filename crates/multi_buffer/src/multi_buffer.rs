@@ -5369,6 +5369,7 @@ impl MultiBufferSnapshot {
 
         let excerpt = cursor.item()?;
 
+        // FIXME handle the case where it's past the end of the last excerpt for the buffer
         if let Anchor::Excerpt(excerpt_anchor) = anchor
             && (excerpt_anchor.path != excerpt.path_key_index
                 || excerpt_anchor.buffer_id() != excerpt.buffer_id)

@@ -497,12 +497,14 @@ impl Editor {
                 }
             }
             InlayHintRefreshReason::BuffersRemoved(buffers_removed) => {
+                let snapshot = self.buffer.read(cx).snapshot(cx);
                 let to_remove = self
                     .display_map
                     .read(cx)
                     .current_inlays()
                     .filter_map(|inlay| {
-                        if buffers_removed.contains(&inlay.position.text_anchor()?.buffer_id) {
+                        let (anchor, _) = snapshot.anchor_to_buffer_anchor(inlay.position)?;
+                        if buffers_removed.contains(&anchor.buffer_id) {
                             Some(inlay.id)
                         } else {
                             None
@@ -595,8 +597,9 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) =
-                    hovered_hint.position.text_anchor().and_then(|anchor| {
+                if let Some(ResolvedHint::Resolved(cached_hint)) = buffer_snapshot
+                    .anchor_to_buffer_anchor(hovered_hint.position)
+                    .and_then(|(anchor, _)| {
                         lsp_store.update(cx, |lsp_store, cx| {
                             lsp_store.resolved_hint(anchor.buffer_id, hovered_hint.id, cx)
                         })
@@ -765,19 +768,21 @@ impl Editor {
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
         cx: &mut Context<Self>,
     ) {
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let visible_inlay_hint_ids = self
             .visible_inlay_hints(cx)
             .iter()
             .filter(|inlay| {
-                inlay.position.text_anchor().map(|anchor| anchor.buffer_id) == Some(buffer_id)
+                multi_buffer_snapshot
+                    .anchor_to_buffer_anchor(inlay.position)
+                    .map(|(anchor, _)| anchor.buffer_id)
+                    == Some(buffer_id)
             })
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {
             return;
         };
-
-        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let Some(buffer_snapshot) = self
             .buffer
             .read(cx)
@@ -881,9 +886,11 @@ impl Editor {
                 self.visible_inlay_hints(cx)
                     .iter()
                     .filter(|inlay| {
-                        inlay.position.text_anchor().is_none_or(|anchor| {
-                            invalidate_hints_for_buffers.contains(&anchor.buffer_id)
-                        })
+                        multi_buffer_snapshot
+                            .anchor_to_buffer_anchor(inlay.position)
+                            .is_none_or(|(anchor, _)| {
+                                invalidate_hints_for_buffers.contains(&anchor.buffer_id)
+                            })
                     })
                     .map(|inlay| inlay.id),
             );

@@ -479,7 +479,7 @@ impl MarksState {
                     (
                         k,
                         v.into_iter()
-                            .filter_map(|anchor| anchor.text_anchor())
+                            .filter_map(|anchor| anchor.raw_text_anchor())
                             .collect(),
                     )
                 })

@@ -476,7 +476,8 @@ impl SplitBufferHeadersElement {
         let mut anchors_by_buffer: HashMap<BufferId, (usize, Anchor)> = HashMap::default();
         for selection in all_anchor_selections.iter() {
             let head = selection.head();
-            if let Some(text_anchor) = head.text_anchor() {
+            if let Some((text_anchor, _)) = snapshot.buffer_snapshot().anchor_to_buffer_anchor(head)
+            {
                 anchors_by_buffer
                     .entry(text_anchor.buffer_id)
                     .and_modify(|(latest_id, latest_anchor)| {

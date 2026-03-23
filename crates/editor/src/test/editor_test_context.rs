@@ -555,10 +555,12 @@ impl EditorTestContext {
                             .is_ge()
                 })
                 .filter_map(|s| {
-                    let head = text::ToOffset::to_offset(&s.head().text_anchor()?, &snapshot)
-                        - text::ToOffset::to_offset(&excerpt_range.context.start, &snapshot);
-                    let tail = text::ToOffset::to_offset(&s.head().text_anchor()?, &snapshot)
-                        - text::ToOffset::to_offset(&excerpt_range.context.start, &snapshot);
+                    let (head_anchor, buffer_snapshot) =
+                        multibuffer_snapshot.anchor_to_buffer_anchor(s.head())?;
+                    let head = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&excerpt_range.context.start, buffer_snapshot);
+                    let tail = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&excerpt_range.context.start, buffer_snapshot);
                     Some(tail..head)
                 })
                 .collect::<Vec<_>>();
@@ -748,10 +750,12 @@ impl std::fmt::Display for FormatMultiBufferAsMarkedText {
                             .is_ge()
                 })
                 .filter_map(|s| {
-                    let head = text::ToOffset::to_offset(&s.head().text_anchor()?, &snapshot)
-                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
-                    let tail = text::ToOffset::to_offset(&s.head().text_anchor()?, &snapshot)
-                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    let (head_anchor, buffer_snapshot) =
+                        multibuffer_snapshot.anchor_to_buffer_anchor(s.head())?;
+                    let head = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, buffer_snapshot);
+                    let tail = text::ToOffset::to_offset(&head_anchor, buffer_snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, buffer_snapshot);
                     Some(tail..head)
                 })
                 .rev()

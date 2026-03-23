@@ -334,39 +334,37 @@ enum CollapsedEntry {
     Outline(Range<Anchor>),
 }
 
-// todo!() name
 struct BufferOutlines {
     excerpts: Vec<ExcerptRange<Anchor>>,
-    outlines: ExcerptOutlines,
+    outlines: OutlineState,
 }
 
 impl BufferOutlines {
     fn invalidate_outlines(&mut self) {
-        if let ExcerptOutlines::Outlines(valid_outlines) = &mut self.outlines {
-            self.outlines = ExcerptOutlines::Invalidated(std::mem::take(valid_outlines));
+        if let OutlineState::Outlines(valid_outlines) = &mut self.outlines {
+            self.outlines = OutlineState::Invalidated(std::mem::take(valid_outlines));
         }
     }
 
     fn iter_outlines(&self) -> impl Iterator<Item = &Outline> {
         match &self.outlines {
-            ExcerptOutlines::Outlines(outlines) => outlines.iter(),
-            ExcerptOutlines::Invalidated(outlines) => outlines.iter(),
-            ExcerptOutlines::NotFetched => [].iter(),
+            OutlineState::Outlines(outlines) => outlines.iter(),
+            OutlineState::Invalidated(outlines) => outlines.iter(),
+            OutlineState::NotFetched => [].iter(),
         }
     }
 
     fn should_fetch_outlines(&self) -> bool {
         match &self.outlines {
-            ExcerptOutlines::Outlines(_) => false,
-            ExcerptOutlines::Invalidated(_) => true,
-            ExcerptOutlines::NotFetched => true,
+            OutlineState::Outlines(_) => false,
+            OutlineState::Invalidated(_) => true,
+            OutlineState::NotFetched => true,
         }
     }
 }
 
-// todo!() name
 #[derive(Debug)]
-enum ExcerptOutlines {
+enum OutlineState {
     Outlines(Vec<Outline>),
     Invalidated(Vec<Outline>),
     NotFetched,
@@ -779,7 +777,7 @@ impl OutlinePanel {
                             let new_depth = new_settings.expand_outlines_with_depth;
 
                             for (buffer_id, buffer) in &outline_panel.buffers {
-                                if let ExcerptOutlines::Outlines(outlines) = &buffer.outlines {
+                                if let OutlineState::Outlines(outlines) = &buffer.outlines {
                                     for outline in outlines {
                                         if outline_panel
                                             .outline_children_cache
@@ -1316,7 +1314,6 @@ impl OutlinePanel {
                 PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                     previous_entries.find(|entry| match entry {
                         PanelEntry::Fs(FsEntry::File(file)) => {
-                            // todo!() accessor for the buffer id
                             file.buffer_id == excerpt.context.start.buffer_id
                                 && file.excerpts.contains(&excerpt)
                         }
@@ -1721,17 +1718,17 @@ impl OutlinePanel {
 
         for (&buffer_id, buffer) in &self.buffers {
             match &buffer.outlines {
-                ExcerptOutlines::Outlines(outlines) => {
+                OutlineState::Outlines(outlines) => {
                     for outline in outlines {
                         to_uncollapse.insert(CollapsedEntry::Outline(outline.range.clone()));
                     }
                 }
-                ExcerptOutlines::Invalidated(outlines) => {
+                OutlineState::Invalidated(outlines) => {
                     for outline in outlines {
                         to_uncollapse.insert(CollapsedEntry::Outline(outline.range.clone()));
                     }
                 }
-                ExcerptOutlines::NotFetched => {}
+                OutlineState::NotFetched => {}
             }
             to_uncollapse.extend(
                 buffer
@@ -2229,9 +2226,9 @@ impl OutlinePanel {
             .buffers
             .get(&excerpt.context.start.buffer_id)
             .and_then(|buffer| match &buffer.outlines {
-                ExcerptOutlines::Outlines(outlines) => Some(outlines),
-                ExcerptOutlines::Invalidated(outlines) => Some(outlines),
-                ExcerptOutlines::NotFetched => None,
+                OutlineState::Outlines(outlines) => Some(outlines),
+                OutlineState::Invalidated(outlines) => Some(outlines),
+                OutlineState::NotFetched => None,
             })
             .is_some_and(|outlines| !outlines.is_empty());
         let is_expanded = !self
@@ -2780,15 +2777,13 @@ impl OutlinePanel {
                             .or_insert_with(|| {
                                 let outlines = match outline_panel.buffers.get(&buffer_id) {
                                     Some(old_buffer) => match &old_buffer.outlines {
-                                        ExcerptOutlines::Outlines(outlines) => {
-                                            ExcerptOutlines::Outlines(outlines.clone())
+                                        OutlineState::Outlines(outlines) => {
+                                            OutlineState::Outlines(outlines.clone())
                                         }
-                                        ExcerptOutlines::Invalidated(_) => {
-                                            ExcerptOutlines::NotFetched
-                                        }
-                                        ExcerptOutlines::NotFetched => ExcerptOutlines::NotFetched,
+                                        OutlineState::Invalidated(_) => OutlineState::NotFetched,
+                                        OutlineState::NotFetched => OutlineState::NotFetched,
                                     },
-                                    None => ExcerptOutlines::NotFetched,
+                                    None => OutlineState::NotFetched,
                                 };
                                 BufferOutlines {
                                     outlines,
@@ -3451,11 +3446,10 @@ impl OutlinePanel {
                                 };
 
                             if let Some(buffer) = outline_panel.buffers.get_mut(&buffer_id) {
-                                buffer.outlines =
-                                    ExcerptOutlines::Outlines(fetched_outlines.clone());
+                                buffer.outlines = OutlineState::Outlines(fetched_outlines.clone());
 
                                 if let Some(default_depth) = pending_default_depth
-                                    && let ExcerptOutlines::Outlines(outlines) = &buffer.outlines
+                                    && let OutlineState::Outlines(outlines) = &buffer.outlines
                                 {
                                     outlines
                                         .iter()

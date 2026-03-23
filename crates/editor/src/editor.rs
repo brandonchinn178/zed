@@ -5958,7 +5958,9 @@ impl Editor {
             return;
         }
         let multibuffer_position = multibuffer_snapshot.anchor_before(position);
-        let Some(buffer_position) = multibuffer_position.text_anchor() else {
+        let Some((buffer_position, _)) =
+            multibuffer_snapshot.anchor_to_buffer_anchor(multibuffer_position)
+        else {
             return;
         };
         let Some(buffer) = self.buffer.read(cx).buffer(buffer_position.buffer_id) else {
@@ -23432,13 +23434,7 @@ impl Editor {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
                     let start_row = start.row().0;
-                    let end_row = if !highlight
-                        .range
-                        .end
-                        .text_anchor()
-                        .is_some_and(|s| s.is_max())
-                        && end.column() == 0
-                    {
+                    let end_row = if !highlight.range.end.is_max() && end.column() == 0 {
                         end.row().0.saturating_sub(1)
                     } else {
                         end.row().0
@@ -24420,12 +24416,14 @@ impl Editor {
                     .selections
                     .all::<MultiBufferOffset>(&self.display_snapshot(cx));
                 let multi_buffer = self.buffer.read(cx);
+                let multi_buffer_snapshot = multi_buffer.snapshot(cx);
                 for selection in selections {
-                    for (snapshot, range, anchor) in multi_buffer
-                        .snapshot(cx)
+                    for (snapshot, range, anchor) in multi_buffer_snapshot
                         .range_to_buffer_ranges_with_deleted_hunks(selection.range())
                     {
-                        if let Some(text_anchor) = anchor.and_then(|anchor| anchor.text_anchor()) {
+                        if let Some((text_anchor, _)) = anchor.and_then(|anchor| {
+                            multi_buffer_snapshot.anchor_to_buffer_anchor(anchor)
+                        }) {
                             let Some(buffer_handle) = multi_buffer.buffer(text_anchor.buffer_id)
                             else {
                                 continue;

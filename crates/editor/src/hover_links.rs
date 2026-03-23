@@ -1510,8 +1510,7 @@ mod tests {
                     .selections
                     .newest_anchor()
                     .head()
-                    .text_anchor()
-                    .unwrap();
+                    .expect_text_anchor();
                 let snapshot = editor
                     .buffer()
                     .clone()

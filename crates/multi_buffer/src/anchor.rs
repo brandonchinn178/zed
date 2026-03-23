@@ -78,7 +78,6 @@ impl From<ExcerptAnchor> for Anchor {
     }
 }
 
-// todo!() make more private
 impl ExcerptAnchor {
     pub(crate) fn buffer_id(&self) -> BufferId {
         self.text_anchor.buffer_id
@@ -410,11 +409,22 @@ impl Anchor {
         }
     }
 
-    #[deprecated(note = "FIXME check if callers should be using the buffer_anchor_to_anchor")]
-    pub fn text_anchor(&self) -> Option<text::Anchor> {
+    pub(crate) fn text_anchor(&self) -> Option<text::Anchor> {
         match self {
             Anchor::Min | Anchor::Max => None,
             Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.text_anchor()),
+        }
+    }
+
+    pub fn opaque_id(&self) -> Option<[u8; 20]> {
+        self.text_anchor().map(|a| a.opaque_id())
+    }
+
+    /// Note: anchor_to_buffer_anchor is probably what you want
+    pub fn raw_text_anchor(&self) -> Option<text::Anchor> {
+        match self {
+            Anchor::Min | Anchor::Max => None,
+            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.text_anchor),
         }
     }
 

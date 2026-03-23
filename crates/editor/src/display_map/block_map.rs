@@ -309,7 +309,7 @@ impl From<BlockId> for ElementId {
     fn from(value: BlockId) -> Self {
         match value {
             BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
-            BlockId::ExcerptBoundary(anchor) => anchor.text_anchor().unwrap().opaque_id().into(),
+            BlockId::ExcerptBoundary(anchor) => anchor.opaque_id().unwrap().into(),
             BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id.to_proto())).into(),
             BlockId::Spacer(SpacerId(id)) => ("Spacer", id).into(),
         }
