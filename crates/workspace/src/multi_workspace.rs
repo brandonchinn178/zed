@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
-use zed_actions::agents_sidebar::MoveWorkspaceToNewWindow;
+use zed_actions::agents_sidebar::{MoveWorkspaceToNewWindow, ToggleThreadSwitcher};
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
@@ -850,6 +850,16 @@ impl Render for MultiWorkspace {
                     .on_action(cx.listener(Self::next_workspace))
                     .on_action(cx.listener(Self::previous_workspace))
                     .on_action(cx.listener(Self::move_active_workspace_to_new_window))
+                    .when_some(
+                        self.sidebar.as_ref().map(|s| s.focus_handle(cx)),
+                        |this, sidebar_focus| {
+                            this.on_action(
+                                move |action: &ToggleThreadSwitcher, window, cx| {
+                                    sidebar_focus.dispatch_action(action, window, cx);
+                                },
+                            )
+                        },
+                    )
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),

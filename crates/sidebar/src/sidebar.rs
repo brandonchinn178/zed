@@ -1,3 +1,5 @@
+mod thread_switcher;
+
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
@@ -43,7 +45,9 @@ use workspace::{
 use zed_actions::OpenRecent;
 use zed_actions::editor::{MoveDown, MoveUp};
 
-use zed_actions::agents_sidebar::FocusSidebarFilter;
+use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
+
+use crate::thread_switcher::{ThreadSwitcher, ThreadSwitcherEvent, ThreadSwitcherEntry};
 
 gpui::actions!(
     agents_sidebar,
@@ -251,6 +255,11 @@ pub struct Sidebar {
     hovered_thread_index: Option<usize>,
     collapsed_groups: HashSet<PathList>,
     expanded_groups: HashMap<PathList, usize>,
+    /// Tracks the order in which the user has accessed threads, most recent
+    /// first. Updated only in response to explicit user actions (clicking a
+    /// thread, confirming in the thread switcher, etc.) — never from
+    /// background data changes. Used to sort the thread switcher popup.
+    thread_access_order: Vec<acp::SessionId>,
     view: SidebarView,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_ix: Option<usize>,
@@ -343,6 +352,7 @@ impl Sidebar {
             hovered_thread_index: None,
             collapsed_groups: HashSet::new(),
             expanded_groups: HashMap::new(),
+            thread_access_order: Vec::new(),
             view: SidebarView::default(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_ix: None,
@@ -641,6 +651,9 @@ impl Sidebar {
                     .and_then(|cv| cv.read(cx).parent_id(cx))
             });
         if panel_focused.is_some() && !self.active_thread_is_draft {
+            if let Some(session_id) = &panel_focused {
+                self.record_thread_access(session_id);
+            }
             self.focused_thread = panel_focused;
         }
 
@@ -1992,6 +2005,7 @@ impl Sidebar {
         workspace: &Entity<Workspace>,
         agent: Agent,
         session_info: acp_thread::AgentSessionInfo,
+        focus: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -2006,7 +2020,7 @@ impl Sidebar {
                     session_info.session_id,
                     session_info.work_dirs,
                     session_info.title,
-                    true,
+                    focus,
                     window,
                     cx,
                 );
@@ -2030,12 +2044,13 @@ impl Sidebar {
         // immediately, rather than waiting for a deferred AgentPanel
         // event which can race with ActiveWorkspaceChanged clearing it.
         self.focused_thread = Some(session_info.session_id.clone());
+        self.record_thread_access(&session_info.session_id);
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), cx);
         });
 
-        Self::load_agent_thread_in_workspace(workspace, agent, session_info, window, cx);
+        Self::load_agent_thread_in_workspace(workspace, agent, session_info, true, window, cx);
 
         self.update_entries(cx);
     }
@@ -2054,7 +2069,7 @@ impl Sidebar {
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
                 multi_workspace.activate(workspace.clone(), cx);
-                Self::load_agent_thread_in_workspace(&workspace, agent, session_info, window, cx);
+                Self::load_agent_thread_in_workspace(&workspace, agent, session_info, true, window, cx);
             })
             .log_err()
             .is_some();
@@ -2069,7 +2084,8 @@ impl Sidebar {
                 .and_then(|sidebar| sidebar.downcast::<Self>().ok())
             {
                 target_sidebar.update(cx, |sidebar, cx| {
-                    sidebar.focused_thread = Some(target_session_id);
+                    sidebar.focused_thread = Some(target_session_id.clone());
+                    sidebar.record_thread_access(&target_session_id);
                     sidebar.update_entries(cx);
                 });
             }
@@ -2399,8 +2415,10 @@ impl Sidebar {
             });
 
             if let Some(next) = next_thread {
-                self.focused_thread = Some(next.session_info.session_id.clone());
-
+                let next_session_id = next.session_info.session_id.clone();
+                let next_agent = next.agent.clone();
+                let next_work_dirs = next.session_info.work_dirs.clone();
+                let next_title = next.session_info.title.clone();
                 // Use the thread's own workspace when it has one open (e.g. an absorbed
                 // linked worktree thread that appears under the main workspace's header
                 // but belongs to its own workspace). Loading into the wrong panel binds
@@ -2410,15 +2428,17 @@ impl Sidebar {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
                     ThreadEntryWorkspace::Closed(_) => group_workspace,
                 };
+                self.focused_thread = Some(next_session_id.clone());
+                self.record_thread_access(&next_session_id);
 
                 if let Some(workspace) = target_workspace {
                     if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.load_agent_thread(
-                                next.agent.clone(),
-                                next.session_info.session_id.clone(),
-                                next.session_info.work_dirs.clone(),
-                                next.session_info.title.clone(),
+                                next_agent,
+                                next_session_id,
+                                next_work_dirs,
+                                next_title,
                                 true,
                                 window,
                                 cx,
@@ -2460,6 +2480,184 @@ impl Sidebar {
         }
         let session_id = thread.session_info.session_id.clone();
         self.archive_thread(&session_id, window, cx);
+    }
+
+    fn record_thread_access(&mut self, session_id: &acp::SessionId) {
+        self.thread_access_order
+            .retain(|id| id != session_id);
+        self.thread_access_order.insert(0, session_id.clone());
+    }
+
+    fn mru_threads_for_switcher(&self, _cx: &App) -> Vec<ThreadSwitcherEntry> {
+        let mut entries: Vec<ThreadSwitcherEntry> = self
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::Thread(thread) if thread.is_live => {
+                    let workspace = match &thread.workspace {
+                        ThreadEntryWorkspace::Open(workspace) => workspace.clone(),
+                        ThreadEntryWorkspace::Closed(_) => return None,
+                    };
+                    Some(ThreadSwitcherEntry {
+                        session_id: thread.session_info.session_id.clone(),
+                        title: thread
+                            .session_info
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| "Untitled".into()),
+                        icon: thread.icon,
+                        icon_from_external_svg: thread.icon_from_external_svg.clone(),
+                        status: thread.status,
+                        agent: thread.agent.clone(),
+                        session_info: thread.session_info.clone(),
+                        workspace,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+
+        let access_order = &self.thread_access_order;
+        entries.sort_by_key(|entry| {
+            access_order
+                .iter()
+                .position(|id| id == &entry.session_id)
+                .unwrap_or(usize::MAX)
+        });
+
+        entries
+    }
+
+    fn toggle_thread_switcher(
+        &mut self,
+        action: &ToggleThreadSwitcher,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        let existing = multi_workspace
+            .read(cx)
+            .active_modal::<ThreadSwitcher>(cx);
+
+        if let Some(thread_switcher) = existing {
+            thread_switcher.update(cx, |switcher, cx| {
+                if action.select_last {
+                    switcher.select_last(cx);
+                } else {
+                    switcher.cycle_selection(cx);
+                }
+            });
+            return;
+        }
+
+        let entries = self.mru_threads_for_switcher(cx);
+        if entries.len() < 2 {
+            return;
+        }
+
+        let select_last = action.select_last;
+        let sidebar = cx.entity().downgrade();
+
+        let original_entry = self.focused_thread.as_ref().and_then(|focused_id| {
+            entries.iter().find(|e| &e.session_id == focused_id)
+        });
+        let original_agent = original_entry.map(|e| e.agent.clone());
+        let original_session_info = original_entry.map(|e| e.session_info.clone());
+        let original_workspace = multi_workspace.read(cx).workspace().clone();
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            let workspace = multi_workspace.workspace().clone();
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    let switcher = ThreadSwitcher::new(entries, select_last, window, cx);
+
+                    cx.subscribe_in(
+                        &cx.entity(),
+                        window,
+                        {
+                            let original_agent = original_agent.clone();
+                            let original_session_info = original_session_info.clone();
+                            let original_workspace = original_workspace.clone();
+                            move |_this, _emitter, event: &ThreadSwitcherEvent, window, cx| {
+                                let Some(sidebar) = sidebar.upgrade() else {
+                                    return;
+                                };
+                                match event {
+                                    ThreadSwitcherEvent::Preview {
+                                        agent,
+                                        session_info,
+                                        workspace,
+                                    } => {
+                                        sidebar.update(cx, |sidebar, cx| {
+                                            sidebar.focused_thread =
+                                                Some(session_info.session_id.clone());
+                                            sidebar.update_entries(cx);
+                                        });
+                                        Self::load_agent_thread_in_workspace(
+                                            workspace,
+                                            agent.clone(),
+                                            session_info.clone(),
+                                            false,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    ThreadSwitcherEvent::Confirmed {
+                                        agent,
+                                        session_info,
+                                        workspace,
+                                    } => {
+                                        sidebar.update(cx, |sidebar, cx| {
+                                            sidebar.record_thread_access(
+                                                &session_info.session_id,
+                                            );
+                                            sidebar.focused_thread =
+                                                Some(session_info.session_id.clone());
+                                            sidebar.update_entries(cx);
+                                        });
+                                        Self::load_agent_thread_in_workspace(
+                                            workspace,
+                                            agent.clone(),
+                                            session_info.clone(),
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    ThreadSwitcherEvent::Dismissed => {
+                                        if let Some(session_info) = &original_session_info {
+                                            sidebar.update(cx, |sidebar, cx| {
+                                                sidebar.focused_thread =
+                                                    Some(session_info.session_id.clone());
+                                                sidebar.update_entries(cx);
+                                            });
+                                            let agent = original_agent
+                                                .clone()
+                                                .unwrap_or(Agent::NativeAgent);
+                                            Self::load_agent_thread_in_workspace(
+                                                &original_workspace,
+                                                agent,
+                                                session_info.clone(),
+                                                false,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    .detach();
+
+                    switcher
+                });
+            });
+        });
     }
 
     fn render_thread(
@@ -3106,6 +3304,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
+            .on_action(cx.listener(Self::toggle_thread_switcher))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
