@@ -626,11 +626,7 @@ impl MarksState {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| {
-                        multibuffer_snapshot
-                            .buffer_anchor_to_anchor(*anchor)
-                            .unwrap()
-                    })
+                    .map(|anchor| multibuffer_snapshot.anchor_in_excerpt(*anchor).unwrap())
                     .collect();
                 return Some(Mark::Local(anchors));
             }

@@ -878,7 +878,7 @@ fn test_expand_excerpts(cx: &mut App) {
         multibuffer.expand_excerpts(
             multibuffer.snapshot(cx).excerpts().map(|excerpt| {
                 multibuffer_snapshot
-                    .buffer_anchor_to_anchor(excerpt.context.start)
+                    .anchor_in_excerpt(excerpt.context.start)
                     .unwrap()
             }),
             1,
@@ -2064,8 +2064,8 @@ fn test_set_excerpts_for_path_replaces_previous_buffer(cx: &mut TestAppContext) 
         let buffer_snapshot = buffer_a.read(cx).snapshot();
         let mut anchors = ranges_a.into_iter().filter_map(|range| {
             let text_range = buffer_snapshot.anchor_range_inside(range);
-            let start = snapshot.anchor_in_buffer_unchecked(text_range.start)?;
-            let end = snapshot.anchor_in_buffer_unchecked(text_range.end)?;
+            let start = snapshot.anchor_in_buffer(text_range.start)?;
+            let end = snapshot.anchor_in_buffer(text_range.end)?;
             Some(start..end)
         });
         (
@@ -2109,8 +2109,8 @@ fn test_set_excerpts_for_path_replaces_previous_buffer(cx: &mut TestAppContext) 
             .into_iter()
             .filter_map(|range| {
                 let text_range = buffer_snapshot.anchor_range_inside(range);
-                let start = snapshot.anchor_in_buffer_unchecked(text_range.start)?;
-                let end = snapshot.anchor_in_buffer_unchecked(text_range.end)?;
+                let start = snapshot.anchor_in_buffer(text_range.start)?;
+                let end = snapshot.anchor_in_buffer(text_range.end)?;
                 Some(start..end)
             })
             .next()
@@ -2227,6 +2227,80 @@ fn test_stale_anchor_after_buffer_removal_and_path_reuse(cx: &mut TestAppContext
             snapshot.len()
         );
     });
+}
+
+#[gpui::test]
+async fn test_map_excerpt_ranges_with_deleted_hunks(cx: &mut TestAppContext) {
+    let base_text = "aaa\nbbb\nccc\nddd\neee\n";
+    let text = "aaa\nBBB\neee\n";
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let diff = cx
+        .new(|cx| BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [Point::zero()..buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multibuffer.add_diff(diff.clone(), cx);
+        multibuffer
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+    cx.run_until_parked();
+
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+
+    let result = snapshot.map_excerpt_ranges(
+        snapshot.point_to_offset(Point::new(0, 0))..snapshot.point_to_offset(Point::new(0, 0)),
+        |_buf, _excerpt_range, input_buffer_range| vec![(input_buffer_range.clone(), ())],
+    );
+    let result = result.expect("range in main buffer text should return Some");
+    assert!(
+        result[0].0.is_some(),
+        "mapped range in main buffer text should be Some"
+    );
+
+    let mut deleted_row = None;
+    for row in 0..=snapshot.max_row().0 {
+        if let Some((buf, _range)) = snapshot.buffer_line_for_row(MultiBufferRow(row)) {
+            if buf.remote_id() != buffer_id {
+                deleted_row = Some(row);
+                break;
+            }
+        }
+    }
+    let deleted_row = deleted_row.expect("should find a row belonging to the diff base");
+    let result = snapshot.map_excerpt_ranges(
+        snapshot.point_to_offset(Point::new(deleted_row, 0))
+            ..snapshot.point_to_offset(Point::new(deleted_row, 0)),
+        |_buf, _excerpt_range, input_buffer_range| vec![(input_buffer_range.clone(), ())],
+    );
+    assert!(
+        result.is_none(),
+        "range inside a deleted hunk should return None"
+    );
+
+    let buffer_len = buffer.read_with(cx, |buf, _| BufferOffset(buf.len()));
+    let result = snapshot.map_excerpt_ranges(
+        snapshot.point_to_offset(Point::new(0, 0))..snapshot.point_to_offset(Point::new(0, 0)),
+        |_buf, _excerpt_range, _input_buffer_range| vec![(BufferOffset(0)..buffer_len, ())],
+    );
+    let result = result.expect("range in main buffer text should return Some");
+    assert!(
+        result[0].0.is_none(),
+        "buffer range spanning a deleted hunk should map to None"
+    );
 }
 
 #[gpui::test]
@@ -3127,9 +3201,9 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         .collect::<Vec<_>>();
                     log::info!("Expanding excerpts {excerpt_ixs:?} by {line_count} lines");
                     multibuffer.expand_excerpts(
-                        excerpts.iter().map(|info| {
-                            snapshot.buffer_anchor_to_anchor(info.context.end).unwrap()
-                        }),
+                        excerpts
+                            .iter()
+                            .map(|info| snapshot.anchor_in_excerpt(info.context.end).unwrap()),
                         line_count,
                         ExpandExcerptDirection::UpAndDown,
                         cx,
@@ -3168,8 +3242,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
                     let start = excerpt.range.start;
                     let end = excerpt.range.end;
-                    let range = snapshot.buffer_anchor_to_anchor(start).unwrap()
-                        ..snapshot.buffer_anchor_to_anchor(end).unwrap();
+                    let range = snapshot.anchor_in_excerpt(start).unwrap()
+                        ..snapshot.anchor_in_excerpt(end).unwrap();
 
                     log::info!(
                         "expanding diff hunks in range {:?} (excerpt index {excerpt_ix:?}, buffer id {:?})",
@@ -3369,7 +3443,6 @@ fn mutate_excerpt_ranges(
     let mut ranges_to_add = Vec::new();
 
     for _ in 0..operations {
-        // todo!() logging
         match rng.random_range(0..5) {
             0..=1 if !existing_ranges.is_empty() => {
                 let index = rng.random_range(0..existing_ranges.len());
@@ -3475,7 +3548,6 @@ fn check_multibuffer(
             + 1
     );
     for i in 0..snapshot.len().0 {
-        // todo!() this seems not useful
         let (_, excerpt_range) = snapshot
             .excerpt_containing(MultiBufferOffset(i)..MultiBufferOffset(i))
             .unwrap();
@@ -3924,7 +3996,7 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let anchor_1 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .snapshot(cx)
-            .buffer_anchor_to_anchor(text::Anchor::min_for_buffer(buffer_1.read(cx).remote_id()))
+            .anchor_in_excerpt(text::Anchor::min_for_buffer(buffer_1.read(cx).remote_id()))
             .unwrap()
     });
     let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
@@ -3933,7 +4005,7 @@ async fn test_summaries_for_anchors(cx: &mut TestAppContext) {
     let anchor_2 = multibuffer.read_with(cx, |multibuffer, cx| {
         multibuffer
             .snapshot(cx)
-            .buffer_anchor_to_anchor(text::Anchor::min_for_buffer(buffer_2.read(cx).remote_id()))
+            .anchor_in_excerpt(text::Anchor::min_for_buffer(buffer_2.read(cx).remote_id()))
             .unwrap()
     });
     let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
@@ -5347,12 +5419,8 @@ fn test_cannot_seek_backward_after_excerpt_replacement(cx: &mut TestAppContext) 
         let e_b2_info = excerpt_infos[1].clone();
         let e_b3_info = excerpt_infos[2].clone();
 
-        let anchor_b2 = snapshot
-            .buffer_anchor_to_anchor(e_b2_info.context.start)
-            .unwrap();
-        let anchor_b3 = snapshot
-            .buffer_anchor_to_anchor(e_b3_info.context.start)
-            .unwrap();
+        let anchor_b2 = snapshot.anchor_in_excerpt(e_b2_info.context.start).unwrap();
+        let anchor_b3 = snapshot.anchor_in_excerpt(e_b3_info.context.start).unwrap();
         (anchor_b2, anchor_b3)
     });
 

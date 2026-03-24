@@ -41,9 +41,7 @@ impl Editor {
                         .or_default();
 
                     let Some((_, excerpt)) = multi_buffer_snapshot
-                        .anchor_in_buffer_unchecked(
-                            buffer_snapshot.anchor_after(buffer_range.start),
-                        )
+                        .anchor_in_buffer(buffer_snapshot.anchor_after(buffer_range.start))
                         .and_then(|anchor| {
                             multi_buffer_snapshot.excerpt_containing(anchor..anchor)
                         })
@@ -70,10 +68,8 @@ impl Editor {
                             {
                                 let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
                                 Some(
-                                    multi_buffer_snapshot
-                                        .anchor_in_buffer_unchecked(anchors.start)?
-                                        ..multi_buffer_snapshot
-                                            .anchor_in_buffer_unchecked(anchors.end)?,
+                                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
                                 )
                             } else {
                                 None
@@ -84,10 +80,8 @@ impl Editor {
                             {
                                 let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
                                 Some(
-                                    multi_buffer_snapshot
-                                        .anchor_in_buffer_unchecked(anchors.start)?
-                                        ..multi_buffer_snapshot
-                                            .anchor_in_buffer_unchecked(anchors.end)?,
+                                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
                                 )
                             } else {
                                 None

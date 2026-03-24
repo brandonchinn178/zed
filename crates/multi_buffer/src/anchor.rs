@@ -34,7 +34,6 @@ pub enum Anchor {
     Max,
 }
 
-// todo!() should this take a lifetime?
 pub(crate) enum AnchorSeekTarget {
     Excerpt {
         path_key: PathKey,

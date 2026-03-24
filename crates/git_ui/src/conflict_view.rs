@@ -201,7 +201,7 @@ fn conflicts_updated(
     for conflict in new_conflicts {
         update_conflict_highlighting(editor, conflict, &snapshot, cx);
 
-        let Some(anchor) = snapshot.buffer_anchor_to_anchor(conflict.range.start) else {
+        let Some(anchor) = snapshot.anchor_in_excerpt(conflict.range.start) else {
             continue;
         };
 

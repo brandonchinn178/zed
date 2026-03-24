@@ -90,24 +90,24 @@ fn outline_for_editor(
             .filter_map(|item| {
                 Some(OutlineItem {
                     depth: item.depth,
-                    range: multibuffer.anchor_in_buffer_unchecked(item.range.start)?
-                        ..multibuffer.anchor_in_buffer_unchecked(item.range.end)?,
+                    range: multibuffer.anchor_in_buffer(item.range.start)?
+                        ..multibuffer.anchor_in_buffer(item.range.end)?,
                     source_range_for_text: multibuffer
-                        .anchor_in_buffer_unchecked(item.source_range_for_text.start)?
-                        ..multibuffer.anchor_in_buffer_unchecked(item.source_range_for_text.end)?,
+                        .anchor_in_buffer(item.source_range_for_text.start)?
+                        ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
                     text: item.text,
                     highlight_ranges: item.highlight_ranges,
                     name_ranges: item.name_ranges,
                     body_range: item.body_range.and_then(|r| {
                         Some(
-                            multibuffer.anchor_in_buffer_unchecked(r.start)?
-                                ..multibuffer.anchor_in_buffer_unchecked(r.end)?,
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
                         )
                     }),
                     annotation_range: item.annotation_range.and_then(|r| {
                         Some(
-                            multibuffer.anchor_in_buffer_unchecked(r.start)?
-                                ..multibuffer.anchor_in_buffer_unchecked(r.end)?,
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
                         )
                     }),
                 })

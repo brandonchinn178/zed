@@ -236,7 +236,7 @@ impl Editor {
                     .buffer()
                     .read(cx)
                     .snapshot(cx)
-                    .buffer_anchor_to_anchor(anchor)
+                    .anchor_in_excerpt(anchor)
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };

@@ -22950,10 +22950,10 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
             .into_iter()
             .map(|hunk| {
                 multibuffer_snapshot
-                    .buffer_anchor_to_anchor(hunk.buffer_range.start)
+                    .anchor_in_excerpt(hunk.buffer_range.start)
                     .unwrap()
                     ..multibuffer_snapshot
-                        .buffer_anchor_to_anchor(hunk.buffer_range.end)
+                        .anchor_in_excerpt(hunk.buffer_range.end)
                         .unwrap()
             })
             .collect::<Vec<_>>()
@@ -23047,10 +23047,10 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
             .into_iter()
             .map(|hunk| {
                 multibuffer_snapshot
-                    .buffer_anchor_to_anchor(hunk.buffer_range.start)
+                    .anchor_in_excerpt(hunk.buffer_range.start)
                     .unwrap()
                     ..multibuffer_snapshot
-                        .buffer_anchor_to_anchor(hunk.buffer_range.end)
+                        .anchor_in_excerpt(hunk.buffer_range.end)
                         .unwrap()
             })
             .collect::<Vec<_>>()
@@ -23119,10 +23119,10 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
             .into_iter()
             .map(|hunk| {
                 multibuffer_snapshot
-                    .buffer_anchor_to_anchor(hunk.buffer_range.start)
+                    .anchor_in_excerpt(hunk.buffer_range.start)
                     .unwrap()
                     ..multibuffer_snapshot
-                        .buffer_anchor_to_anchor(hunk.buffer_range.end)
+                        .anchor_in_excerpt(hunk.buffer_range.end)
                         .unwrap()
             })
             .collect::<Vec<_>>()
@@ -23230,10 +23230,10 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
             .collect::<Vec<_>>();
         assert_eq!(hunks.len(), 1);
         let hunk_range = multibuffer_snapshot
-            .buffer_anchor_to_anchor(hunks[0].buffer_range.start)
+            .anchor_in_excerpt(hunks[0].buffer_range.start)
             .unwrap()
             ..multibuffer_snapshot
-                .buffer_anchor_to_anchor(hunks[0].buffer_range.end)
+                .anchor_in_excerpt(hunks[0].buffer_range.end)
                 .unwrap();
         editor.toggle_single_diff_hunk(hunk_range, cx)
     });

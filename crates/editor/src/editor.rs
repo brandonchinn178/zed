@@ -7078,8 +7078,8 @@ impl Editor {
                 let buffer_snapshot = buffer_handle.read(cx).snapshot();
                 ranges_to_highlight.extend(edited_ranges.into_iter().filter_map(|range| {
                     let text_range = buffer_snapshot.anchor_range_inside(range);
-                    let start = snapshot.anchor_in_buffer_unchecked(text_range.start)?;
-                    let end = snapshot.anchor_in_buffer_unchecked(text_range.end)?;
+                    let start = snapshot.anchor_in_buffer(text_range.start)?;
+                    let end = snapshot.anchor_in_buffer(text_range.end)?;
                     Some(start..end)
                 }));
             }
@@ -7598,9 +7598,8 @@ impl Editor {
                                     .anchor_before(search_range.start + match_range.end);
                                 {
                                     let range = multi_buffer_snapshot
-                                        .anchor_in_buffer_unchecked(match_start)?
-                                        ..multi_buffer_snapshot
-                                            .anchor_in_buffer_unchecked(match_end)?;
+                                        .anchor_in_buffer(match_start)?
+                                        ..multi_buffer_snapshot.anchor_in_buffer(match_end)?;
                                     Some(range).filter(|match_anchor_range| {
                                         match_anchor_range != &query_range
                                     })
@@ -8644,7 +8643,7 @@ impl Editor {
         }
 
         let cursor_position = predicted_cursor_position.and_then(|predicted| {
-            let anchor = multibuffer.buffer_anchor_to_anchor(predicted.anchor)?;
+            let anchor = multibuffer.anchor_in_excerpt(predicted.anchor)?;
             Some((anchor, predicted.offset))
         });
 
@@ -8833,7 +8832,7 @@ impl Editor {
             );
             for (breakpoint, state) in breakpoints {
                 let Some(multi_buffer_anchor) =
-                    multi_buffer_snapshot.buffer_anchor_to_anchor(breakpoint.position)
+                    multi_buffer_snapshot.anchor_in_excerpt(breakpoint.position)
                 else {
                     continue;
                 };
@@ -11874,7 +11873,7 @@ impl Editor {
                         if breakpoint_row == row {
                             snapshot
                                 .buffer_snapshot()
-                                .buffer_anchor_to_anchor(bp.position)
+                                .anchor_in_excerpt(bp.position)
                                 .map(|position| (position, bp.bp.clone()))
                         } else {
                             None
@@ -16816,7 +16815,7 @@ impl Editor {
                             (),
                         )]
                     },
-                ) && let [(new_range, _)] = results.as_slice()
+                ) && let [(Some(new_range), _)] = results.as_slice()
                 {
                     selected_sibling = true;
                     let new_range =
@@ -16876,7 +16875,7 @@ impl Editor {
                             (),
                         )]
                     },
-                ) && let [(new_range, _)] = results.as_slice()
+                ) && let [(Some(new_range), _)] = results.as_slice()
                 {
                     selected_sibling = true;
                     let new_range = multibuffer_snapshot.anchor_after(new_range.start)
@@ -17137,7 +17136,7 @@ impl Editor {
                         let buffer_snapshot = buffer.read(cx).snapshot();
                         let offset = display_snapshot
                             .buffer_snapshot()
-                            .buffer_anchor_to_anchor(location.target.range.start);
+                            .anchor_in_excerpt(location.target.range.start);
                         if let Some(offset) = offset {
                             let task_buffer_range =
                                 location.target.range.to_point(&buffer_snapshot);
@@ -17466,7 +17465,7 @@ impl Editor {
                     .range_to_buffer_ranges(selection.range())
                     .into_iter()
                     .filter_map(|(buffer_snapshot, range)| {
-                        snapshot.buffer_anchor_to_anchor(buffer_snapshot.anchor_after(range.start))
+                        snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(range.start))
                     })
             })
             .collect::<Vec<_>>();
@@ -18483,10 +18482,8 @@ impl Editor {
                     let mut locations = locations
                         .into_iter()
                         .filter_map(|loc| {
-                            let start =
-                                multi_buffer_snapshot.buffer_anchor_to_anchor(loc.range.start)?;
-                            let end =
-                                multi_buffer_snapshot.buffer_anchor_to_anchor(loc.range.end)?;
+                            let start = multi_buffer_snapshot.anchor_in_excerpt(loc.range.start)?;
+                            let end = multi_buffer_snapshot.anchor_in_excerpt(loc.range.end)?;
                             Some(start..end)
                         })
                         .collect::<Vec<_>>();
@@ -18756,8 +18753,8 @@ impl Editor {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 ranges.extend(ranges_for_buffer.into_iter().filter_map(|range| {
                     let text_range = buffer_snapshot.anchor_range_inside(range);
-                    let start = snapshot.anchor_in_buffer_unchecked(text_range.start)?;
-                    let end = snapshot.anchor_in_buffer_unchecked(text_range.end)?;
+                    let start = snapshot.anchor_in_buffer(text_range.start)?;
+                    let end = snapshot.anchor_in_buffer(text_range.end)?;
                     Some(start..end)
                 }))
             }
@@ -20598,9 +20595,9 @@ impl Editor {
                 .filter(move |hunk| {
                     if let Some((_, excerpt_range)) = &end_excerpt
                         && let Some(end_anchor) =
-                            buffer.buffer_anchor_to_anchor(excerpt_range.context.end)
+                            buffer.anchor_in_excerpt(excerpt_range.context.end)
                         && let Some(hunk_end_anchor) =
-                            buffer.buffer_anchor_to_anchor(hunk.excerpt_range.context.end)
+                            buffer.anchor_in_excerpt(hunk.excerpt_range.context.end)
                         && hunk_end_anchor.cmp(&end_anchor, buffer).is_gt()
                     {
                         false
@@ -22843,7 +22840,7 @@ impl Editor {
             let position = active_stack_frame.position;
 
             let snapshot = self.buffer.read(cx).snapshot(cx);
-            let multibuffer_anchor = snapshot.buffer_anchor_to_anchor(position)?;
+            let multibuffer_anchor = snapshot.anchor_in_excerpt(position)?;
 
             self.clear_row_highlights::<ActiveDebugLine>();
 
@@ -23942,8 +23939,7 @@ impl Editor {
 
                     for (_buffer_id, inline_values) in buffer_inline_values {
                         for hint in inline_values {
-                            let Some(anchor) = snapshot.buffer_anchor_to_anchor(hint.position)
-                            else {
+                            let Some(anchor) = snapshot.anchor_in_excerpt(hint.position) else {
                                 continue;
                             };
                             let inlay = Inlay::debugger(

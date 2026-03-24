@@ -2599,11 +2599,10 @@ impl EditorElement {
                     column: 0,
                 };
                 // move to other row if different excerpt
-                // todo!() now does the wrong thing with deleted hunks
                 if snapshot
                     .display_snapshot
                     .buffer_snapshot()
-                    .range_to_buffer_range(buffer_point..candidate_point)
+                    .excerpt_containing(buffer_point..candidate_point)
                     .is_none()
                 {
                     return false;

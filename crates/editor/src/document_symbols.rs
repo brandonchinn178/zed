@@ -90,8 +90,8 @@ impl Editor {
             })
             .filter_map(|item| {
                 let range_start =
-                    multi_buffer_snapshot.anchor_in_buffer_unchecked(item.range.start)?;
-                let range_end = multi_buffer_snapshot.anchor_in_buffer_unchecked(item.range.end)?;
+                    multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
+                let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
                 Some(OutlineItem {
                     depth: item.depth,
                     range: range_start.clone()..range_end.clone(),
@@ -101,14 +101,14 @@ impl Editor {
                     name_ranges: item.name_ranges.clone(),
                     body_range: item.body_range.as_ref().and_then(|r| {
                         Some(
-                            multi_buffer_snapshot.anchor_in_buffer_unchecked(r.start)?
-                                ..multi_buffer_snapshot.anchor_in_buffer_unchecked(r.end)?,
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
                         )
                     }),
                     annotation_range: item.annotation_range.as_ref().and_then(|r| {
                         Some(
-                            multi_buffer_snapshot.anchor_in_buffer_unchecked(r.start)?
-                                ..multi_buffer_snapshot.anchor_in_buffer_unchecked(r.end)?,
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
                         )
                     }),
                 })

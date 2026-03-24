@@ -591,8 +591,7 @@ pub fn start_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let Some(start_anchor) = map.buffer_anchor_to_anchor(excerpt_range.context.start)
-            else {
+            let Some(start_anchor) = map.anchor_in_excerpt(excerpt_range.context.start) else {
                 return display_point;
             };
             let mut start = start_anchor.to_display_point(map);
@@ -600,14 +599,14 @@ pub fn start_of_excerpt(
                 let Some(excerpt) = map.buffer_snapshot().excerpt_before(start_anchor) else {
                     return display_point;
                 };
-                if let Some(start_anchor) = map.buffer_anchor_to_anchor(excerpt.context.start) {
+                if let Some(start_anchor) = map.anchor_in_excerpt(excerpt.context.start) {
                     start = start_anchor.to_display_point(map);
                 }
             }
             start
         }
         Direction::Next => {
-            let Some(end_anchor) = map.buffer_anchor_to_anchor(excerpt_range.context.end) else {
+            let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) else {
                 return display_point;
             };
             let mut end = end_anchor.to_display_point(map);
@@ -628,8 +627,7 @@ pub fn end_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let Some(start_anchor) = map.buffer_anchor_to_anchor(excerpt_range.context.start)
-            else {
+            let Some(start_anchor) = map.anchor_in_excerpt(excerpt_range.context.start) else {
                 return display_point;
             };
             let mut start = start_anchor.to_display_point(map);
@@ -641,7 +639,7 @@ pub fn end_of_excerpt(
             start
         }
         Direction::Next => {
-            let Some(end_anchor) = map.buffer_anchor_to_anchor(excerpt_range.context.end) else {
+            let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) else {
                 return display_point;
             };
             let mut end = end_anchor.to_display_point(map);
@@ -655,7 +653,7 @@ pub fn end_of_excerpt(
                 else {
                     return display_point;
                 };
-                if let Some(end_anchor) = map.buffer_anchor_to_anchor(excerpt_range.context.end) {
+                if let Some(end_anchor) = map.anchor_in_excerpt(excerpt_range.context.end) {
                     end = end_anchor.to_display_point(map);
                 }
                 *end.column_mut() = 0;

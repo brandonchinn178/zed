@@ -213,8 +213,7 @@ where
         for excerpt in pending.drain(..) {
             let target_position = patch.old_to_new(excerpt.buffer_point_range.start);
             let target_position = target_buffer.anchor_before(target_position);
-            let Some(target_position) = target_snapshot.buffer_anchor_to_anchor(target_position)
-            else {
+            let Some(target_position) = target_snapshot.anchor_in_excerpt(target_position) else {
                 continue;
             };
             let Some((target_buffer_snapshot, target_excerpt_range)) =
@@ -249,7 +248,7 @@ where
 
         let buffer_point_range = source_range.to_point(&buffer_snapshot);
         let Some((_, source_excerpt_range)) = source_snapshot
-            .anchor_in_buffer_unchecked(buffer_snapshot.anchor_after(source_range.start))
+            .anchor_in_buffer(buffer_snapshot.anchor_after(source_range.start))
             .and_then(|anchor| source_snapshot.excerpt_containing(anchor..anchor))
         else {
             continue;
@@ -291,20 +290,20 @@ fn patch_for_excerpt(
         .context
         .to_point(source_buffer_snapshot);
     let source_multibuffer_range = (source_snapshot
-        .anchor_in_buffer_unchecked(source_excerpt_range.context.start)
+        .anchor_in_buffer(source_excerpt_range.context.start)
         .expect("buffer should exist in multibuffer")
         ..source_snapshot
-            .anchor_in_buffer_unchecked(source_excerpt_range.context.end)
+            .anchor_in_buffer(source_excerpt_range.context.end)
             .expect("buffer should exist in multibuffer"))
         .to_point(source_snapshot);
     let target_buffer_range = target_excerpt_range
         .context
         .to_point(target_buffer_snapshot);
     let target_multibuffer_range = (target_snapshot
-        .anchor_in_buffer_unchecked(target_excerpt_range.context.start)
+        .anchor_in_buffer(target_excerpt_range.context.start)
         .expect("buffer should exist in multibuffer")
         ..target_snapshot
-            .anchor_in_buffer_unchecked(target_excerpt_range.context.end)
+            .anchor_in_buffer(target_excerpt_range.context.end)
             .expect("buffer should exist in multibuffer"))
         .to_point(target_snapshot);
 
@@ -583,8 +582,7 @@ impl SplittableEditor {
                                     anchor.to_point(&lhs_buffer),
                                     &rhs_buffer,
                                 );
-                                rhs_snapshot
-                                    .buffer_anchor_to_anchor(rhs_buffer.anchor_before(rhs_point))
+                                rhs_snapshot.anchor_in_excerpt(rhs_buffer.anchor_before(rhs_point))
                             })
                             .collect::<Vec<_>>();
                         this.expand_excerpts(rhs_anchors.into_iter(), *lines, *direction, cx);
@@ -1287,12 +1285,12 @@ impl SplittableEditor {
                         let rhs_end = Point::new(rhs_hunk.row_range.end.0, 0);
 
                         let lhs_excerpt_end = lhs_snapshot
-                            .buffer_anchor_to_anchor(lhs_hunk.excerpt_range.context.end)
+                            .anchor_in_excerpt(lhs_hunk.excerpt_range.context.end)
                             .unwrap()
                             .to_point(&lhs_snapshot);
                         let lhs_exceeds = lhs_end >= lhs_excerpt_end;
                         let rhs_excerpt_end = rhs_snapshot
-                            .buffer_anchor_to_anchor(rhs_hunk.excerpt_range.context.end)
+                            .anchor_in_excerpt(rhs_hunk.excerpt_range.context.end)
                             .unwrap()
                             .to_point(&rhs_snapshot);
                         let rhs_exceeds = rhs_end >= rhs_excerpt_end;
@@ -2285,9 +2283,7 @@ mod tests {
                         editor.update(cx, |editor, cx| {
                             editor.expand_excerpts(
                                 chosen.into_iter().map(|excerpt| {
-                                    snapshot
-                                        .buffer_anchor_to_anchor(excerpt.context.start)
-                                        .unwrap()
+                                    snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
                                 }),
                                 line_count,
                                 ExpandExcerptDirection::UpAndDown,
@@ -2372,11 +2368,7 @@ mod tests {
             let snapshot = editor.rhs_multibuffer.read(cx).snapshot(cx);
             snapshot
                 .excerpts()
-                .map(|excerpt| {
-                    snapshot
-                        .buffer_anchor_to_anchor(excerpt.context.start)
-                        .unwrap()
-                })
+                .map(|excerpt| snapshot.anchor_in_excerpt(excerpt.context.start).unwrap())
                 .collect::<Vec<_>>()
         });
         editor.update(cx, |editor, cx| {

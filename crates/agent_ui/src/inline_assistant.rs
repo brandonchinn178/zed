@@ -447,8 +447,8 @@ impl InlineAssistant {
             .flat_map(|selection| snapshot.range_to_buffer_ranges(selection.start..selection.end))
         {
             let (Some(start), Some(end)) = (
-                snapshot.anchor_in_buffer_unchecked(buffer.anchor_before(buffer_range.start)),
-                snapshot.anchor_in_buffer_unchecked(buffer.anchor_after(buffer_range.end)),
+                snapshot.anchor_in_buffer(buffer.anchor_before(buffer_range.start)),
+                snapshot.anchor_in_buffer(buffer.anchor_after(buffer_range.end)),
             ) else {
                 continue;
             };

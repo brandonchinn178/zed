@@ -206,8 +206,7 @@ impl EditPredictionContextView {
                     let buffer_snapshot = buffer.read(cx).snapshot();
                     for (range, order) in ranges.into_iter().zip(orders) {
                         let text_anchor = buffer_snapshot.anchor_range_inside(range);
-                        if let Some(start) = snapshot.anchor_in_buffer_unchecked(text_anchor.start)
-                        {
+                        if let Some(start) = snapshot.anchor_in_buffer(text_anchor.start) {
                             excerpt_anchors_with_orders.push((start, order));
                         }
                     }

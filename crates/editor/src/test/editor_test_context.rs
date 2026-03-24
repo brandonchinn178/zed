@@ -473,10 +473,10 @@ impl EditorTestContext {
                             .cloned()
                             .unwrap(),
                         multibuffer_snapshot
-                            .buffer_anchor_to_anchor(info.context.start)
+                            .anchor_in_excerpt(info.context.start)
                             .unwrap()
                             ..multibuffer_snapshot
-                                .buffer_anchor_to_anchor(info.context.end)
+                                .anchor_in_excerpt(info.context.end)
                                 .unwrap(),
                         info,
                     )

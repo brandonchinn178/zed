@@ -2280,9 +2280,7 @@ impl BlockSnapshot {
             }
             BlockId::FoldedBuffer(buffer_id) => self.wrap_snapshot.make_wrap_point(
                 buffer
-                    .buffer_anchor_to_anchor(
-                        buffer.excerpts_for_buffer(buffer_id).next()?.context.start,
-                    )?
+                    .anchor_in_excerpt(buffer.excerpts_for_buffer(buffer_id).next()?.context.start)?
                     .to_point(buffer),
                 Bias::Left,
             ),
@@ -3110,7 +3108,7 @@ mod tests {
             let snapshot = mb.snapshot(cx);
             snapshot
                 .excerpts()
-                .map(|e| snapshot.buffer_anchor_to_anchor(e.context.start).unwrap())
+                .map(|e| snapshot.anchor_in_excerpt(e.context.start).unwrap())
                 .collect::<Vec<_>>()
         });
 

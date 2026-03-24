@@ -293,7 +293,6 @@ impl FollowableItem for Editor {
                         .cloned()
                         .map(serialize_excerpt_range)
                         .collect::<Vec<_>>();
-                    // FIXME unsorted and duplicated, is this an issue?
                     update.updated_paths.push(proto::PathExcerpts {
                         path_key: Some(path_key),
                         buffer_id,
@@ -371,7 +370,7 @@ impl FollowableItem for Editor {
     ) {
         let buffer = self.buffer.read(cx);
         let buffer = buffer.read(cx);
-        let Some(position) = buffer.buffer_anchor_to_anchor(location) else {
+        let Some(position) = buffer.anchor_in_excerpt(location) else {
             return;
         };
         let selection = Selection {
@@ -581,7 +580,7 @@ fn deserialize_anchor(anchor: proto::EditorAnchor, buffer: &MultiBufferSnapshot)
         && let Some(buffer_id) = BufferId::new(buffer_id).ok()
     {
         let text_anchor = language::proto::deserialize_anchor(anchor)?;
-        buffer.buffer_anchor_to_anchor(text_anchor)
+        buffer.anchor_in_excerpt(text_anchor)
     } else {
         match proto::Bias::from_i32(anchor.bias)? {
             proto::Bias::Left => Some(Anchor::Min),

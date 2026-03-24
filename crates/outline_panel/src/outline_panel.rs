@@ -1076,7 +1076,7 @@ impl OutlinePanel {
                 scroll_to_buffer = Some(file.buffer_id);
                 multi_buffer_snapshot.excerpts().find_map(|excerpt_range| {
                     if excerpt_range.context.start.buffer_id == file.buffer_id {
-                        multi_buffer_snapshot.buffer_anchor_to_anchor(excerpt_range.context.start)
+                        multi_buffer_snapshot.anchor_in_excerpt(excerpt_range.context.start)
                     } else {
                         None
                     }
@@ -1097,16 +1097,16 @@ impl OutlinePanel {
                     })
                     .and_then(|mut excerpts| {
                         let excerpt_range = excerpts.next()?;
-                        multi_buffer_snapshot.buffer_anchor_to_anchor(excerpt_range.context.start)
+                        multi_buffer_snapshot.anchor_in_excerpt(excerpt_range.context.start)
                     })
             }
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => multi_buffer_snapshot
-                .buffer_anchor_to_anchor(outline.range.start)
-                .or_else(|| multi_buffer_snapshot.buffer_anchor_to_anchor(outline.range.end)),
+                .anchor_in_excerpt(outline.range.start)
+                .or_else(|| multi_buffer_snapshot.anchor_in_excerpt(outline.range.end)),
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                 change_selection = false;
                 change_focus = false;
-                multi_buffer_snapshot.buffer_anchor_to_anchor(excerpt.context.start)
+                multi_buffer_snapshot.anchor_in_excerpt(excerpt.context.start)
             }
             PanelEntry::Search(search_entry) => Some(search_entry.match_range.start),
         };
@@ -4373,8 +4373,8 @@ impl OutlinePanel {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             if !related_excerpts.iter().any(|excerpt| {
                 let (Some(start), Some(end)) = (
-                    snapshot.anchor_in_buffer_unchecked(excerpt.context.start),
-                    snapshot.anchor_in_buffer_unchecked(excerpt.context.end),
+                    snapshot.anchor_in_buffer(excerpt.context.start),
+                    snapshot.anchor_in_buffer(excerpt.context.end),
                 ) else {
                     return false;
                 };

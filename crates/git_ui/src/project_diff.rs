@@ -608,8 +608,8 @@ impl ProjectDiff {
             let anchor = editor.selections.newest_anchor().head();
             if let Some((_, excerpt_range)) = snapshot.excerpt_containing(anchor..anchor)
                 && let Some(range) = snapshot
-                    .anchor_in_buffer_unchecked(excerpt_range.context.start)
-                    .zip(snapshot.anchor_in_buffer_unchecked(excerpt_range.context.end))
+                    .anchor_in_buffer(excerpt_range.context.start)
+                    .zip(snapshot.anchor_in_buffer(excerpt_range.context.end))
                     .map(|(start, end)| start..end)
             {
                 ranges = vec![range];

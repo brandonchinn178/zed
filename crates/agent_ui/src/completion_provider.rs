@@ -601,7 +601,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 for (terminal_text, terminal_range) in terminal_ranges {
                                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                                     let Some(start) =
-                                        snapshot.buffer_anchor_to_anchor(source_range.start)
+                                        snapshot.anchor_in_excerpt(source_range.start)
                                     else {
                                         return;
                                     };

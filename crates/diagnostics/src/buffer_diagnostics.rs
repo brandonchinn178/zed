@@ -505,10 +505,8 @@ impl BufferDiagnosticsEditor {
                     .into_iter()
                     .filter_map(|range| {
                         let text_range = buffer_snapshot.anchor_range_inside(range.primary);
-                        let start =
-                            multibuffer_snapshot.anchor_in_buffer_unchecked(text_range.start)?;
-                        let end =
-                            multibuffer_snapshot.anchor_in_buffer_unchecked(text_range.end)?;
+                        let start = multibuffer_snapshot.anchor_in_buffer(text_range.start)?;
+                        let end = multibuffer_snapshot.anchor_in_buffer(text_range.end)?;
                         Some(start..end)
                     })
                     .collect();

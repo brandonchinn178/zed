@@ -2346,7 +2346,7 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
         return display_point;
     };
 
-    let Some(anchor) = snapshot.buffer_anchor_to_anchor(buffer_snapshot.anchor_after(
+    let Some(anchor) = snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(
         buffer_snapshot.clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
     )) else {
         return display_point;

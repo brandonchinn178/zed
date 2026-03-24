@@ -649,7 +649,7 @@ impl TextThreadEditor {
                     self.editor.update(cx, |editor, cx| {
                         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                         let start_anchor = multi_buffer_snapshot
-                            .buffer_anchor_to_anchor(start)
+                            .anchor_in_excerpt(start)
                             .unwrap();
 
                         editor.display_map.update(cx, |display_map, cx| {
@@ -1229,7 +1229,7 @@ impl TextThreadEditor {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(
                     buffer
-                        .buffer_anchor_to_anchor(message.anchor_range.start)
+                        .anchor_in_excerpt(message.anchor_range.start)
                         .unwrap(),
                 ),
                 priority: usize::MAX,
@@ -2043,7 +2043,7 @@ impl TextThreadEditor {
                 )
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
-                    let anchor = buffer.buffer_anchor_to_anchor(anchor).unwrap();
+                    let anchor = buffer.anchor_in_excerpt(anchor).unwrap();
                     let image = render_image;
                     anchor.is_valid(&buffer).then(|| BlockProperties {
                         placement: BlockPlacement::Above(anchor),

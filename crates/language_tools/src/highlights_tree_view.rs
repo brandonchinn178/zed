@@ -418,8 +418,8 @@ impl HighlightsTreeView {
                 let start_anchor = buffer_snapshot.anchor_before(capture.node.start_byte());
                 let end_anchor = buffer_snapshot.anchor_after(capture.node.end_byte());
 
-                let start = multi_buffer_snapshot.buffer_anchor_to_anchor(start_anchor);
-                let end = multi_buffer_snapshot.buffer_anchor_to_anchor(end_anchor);
+                let start = multi_buffer_snapshot.anchor_in_excerpt(start_anchor);
+                let end = multi_buffer_snapshot.anchor_in_excerpt(end_anchor);
 
                 let (start, end) = match (start, end) {
                     (Some(s), Some(e)) => (s, e),

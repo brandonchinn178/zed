@@ -224,7 +224,7 @@ impl CommitView {
                         .buffer()
                         .read(cx)
                         .snapshot(cx)
-                        .buffer_anchor_to_anchor(Anchor::max_for_buffer(
+                        .anchor_in_excerpt(Anchor::max_for_buffer(
                             message_buffer.read(cx).remote_id(),
                         ))
                         .map(|anchor| BlockProperties {

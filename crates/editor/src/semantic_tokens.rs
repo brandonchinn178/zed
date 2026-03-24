@@ -1218,7 +1218,7 @@ mod tests {
                 .buffer()
                 .read(cx)
                 .snapshot(cx)
-                .buffer_anchor_to_anchor(text::Anchor::min_for_buffer(
+                .anchor_in_excerpt(text::Anchor::min_for_buffer(
                     toml_buffer.read(cx).remote_id(),
                 ))
                 .unwrap()
