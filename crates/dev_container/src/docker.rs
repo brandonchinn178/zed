@@ -107,6 +107,10 @@ impl Docker {
         self.docker_cli.clone()
     }
 
+    pub(crate) fn is_podman(&self) -> bool {
+        self.docker_cli == "podman"
+    }
+
     pub(crate) async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
         let mut command = smol::process::Command::new(&self.docker_cli);
         command.args(&["pull", image]);
@@ -236,6 +240,9 @@ impl Docker {
         project_name: &str,
     ) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
+        if !self.is_podman() {
+            command.env("DOCKER_BUILDKIT", "1");
+        }
         command.args(&["compose", "--project-name", project_name]);
         for docker_compose_file in config_files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);

@@ -338,8 +338,9 @@ impl DevContainerManifest {
         let image_tag =
             self.generate_features_image_tag(dockerfile_path.clone().display().to_string());
 
-        let build_info = FeaturesBuildInfo {
+        let mut build_info = FeaturesBuildInfo {
             dockerfile_path,
+            dockerfile_no_buildkit_path: None,
             features_content_dir,
             empty_context_dir,
             build_image: dev_container.image.clone(),
@@ -509,6 +510,8 @@ impl DevContainerManifest {
             None
         };
 
+        let dockerfile_base_content_for_no_bk = dockerfile_base_content.clone();
+
         let dockerfile_content = generate_dockerfile_extended(
             &feature_layers,
             &container_user,
@@ -523,6 +526,43 @@ impl DevContainerManifest {
                 log::error!("Failed to write Dockerfile.extended: {e}");
                 DevContainerError::FilesystemError
             })?;
+
+        let is_compose = dev_container.build_type() == DevContainerBuildType::DockerCompose;
+        if self.docker_client.is_podman() && is_compose {
+            let mut no_buildkit_feature_layers = String::new();
+            let ordered_features_for_no_bk =
+                resolve_feature_order(features, &dev_container.override_feature_install_order);
+            for (index, (feature_ref, options)) in ordered_features_for_no_bk.iter().enumerate() {
+                if matches!(options, FeatureOptions::Bool(false)) {
+                    continue;
+                }
+                let feature_id = extract_feature_id(feature_ref);
+                let consecutive_id = format!("{}_{}", feature_id, index);
+                no_buildkit_feature_layers
+                    .push_str(&generate_feature_layer_no_buildkit(&consecutive_id));
+            }
+
+            let no_buildkit_dockerfile_content = generate_dockerfile_extended_no_buildkit(
+                &no_buildkit_feature_layers,
+                &container_user,
+                &remote_user,
+                dockerfile_base_content_for_no_bk,
+            );
+
+            let no_buildkit_path = build_info
+                .features_content_dir
+                .join("Dockerfile.extended.no-buildkit");
+
+            self.fs
+                .write(&no_buildkit_path, no_buildkit_dockerfile_content.as_bytes())
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to write non-BuildKit Dockerfile: {e}");
+                    DevContainerError::FilesystemError
+                })?;
+
+            build_info.dockerfile_no_buildkit_path = Some(no_buildkit_path);
+        }
 
         log::info!(
             "Features build resources written to {:?}",
@@ -582,7 +622,9 @@ impl DevContainerManifest {
         match dev_container.build_type() {
             DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
                 let built_docker_image = self.build_docker_image().await?;
-                let built_docker_image = self.update_remote_user_uid(built_docker_image).await?;
+                let built_docker_image = self
+                    .update_remote_user_uid(built_docker_image, None)
+                    .await?;
 
                 let resources = self.build_merged_resources(built_docker_image)?;
                 Ok(DevContainerBuildResources::Docker(resources))
@@ -688,6 +730,46 @@ impl DevContainerManifest {
             {
                 self.docker_client.inspect_image(image).await?
             } else {
+                let is_podman = self.docker_client.is_podman();
+
+                if is_podman {
+                    self.build_feature_content_image().await?;
+                }
+
+                let dockerfile_path = if is_podman {
+                    features_build_info
+                        .dockerfile_no_buildkit_path
+                        .as_ref()
+                        .unwrap_or(&features_build_info.dockerfile_path)
+                } else {
+                    &features_build_info.dockerfile_path
+                };
+
+                let build_args = if is_podman {
+                    HashMap::from([
+                        ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
+                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                    ])
+                } else {
+                    HashMap::from([
+                        ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
+                        ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
+                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                    ])
+                };
+
+                let additional_contexts = if is_podman {
+                    None
+                } else {
+                    Some(HashMap::from([(
+                        "dev_containers_feature_content_source".to_string(),
+                        features_build_info
+                            .features_content_dir
+                            .display()
+                            .to_string(),
+                    )]))
+                };
+
                 let build_override = DockerComposeConfig {
                     name: None,
                     services: HashMap::from([(
@@ -702,21 +784,9 @@ impl DevContainerManifest {
                                 context: Some(
                                     features_build_info.empty_context_dir.display().to_string(),
                                 ),
-                                dockerfile: Some(
-                                    features_build_info.dockerfile_path.display().to_string(),
-                                ),
-                                args: Some(HashMap::from([
-                                    ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
-                                    ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
-                                    ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()), // TODO this has to get wired up
-                                ])),
-                                additional_contexts: Some(HashMap::from([(
-                                    "dev_containers_feature_content_source".to_string(),
-                                    features_build_info
-                                        .features_content_dir
-                                        .display()
-                                        .to_string(),
-                                )])),
+                                dockerfile: Some(dockerfile_path.display().to_string()),
+                                args: Some(build_args),
+                                additional_contexts,
                             }),
                             volumes: Vec::new(),
                             ..Default::default()
@@ -761,6 +831,52 @@ impl DevContainerManifest {
             .map(|b| b.dockerfile.as_ref())
             .is_some()
         {
+            let is_podman = self.docker_client.is_podman();
+
+            if is_podman {
+                self.build_feature_content_image().await?;
+            }
+
+            let dockerfile_path = if is_podman {
+                features_build_info
+                    .dockerfile_no_buildkit_path
+                    .as_ref()
+                    .unwrap_or(&features_build_info.dockerfile_path)
+            } else {
+                &features_build_info.dockerfile_path
+            };
+
+            let build_args = if is_podman {
+                HashMap::from([
+                    (
+                        "_DEV_CONTAINERS_BASE_IMAGE".to_string(),
+                        "dev_container_auto_added_stage_label".to_string(),
+                    ),
+                    ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                ])
+            } else {
+                HashMap::from([
+                    ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
+                    (
+                        "_DEV_CONTAINERS_BASE_IMAGE".to_string(),
+                        "dev_container_auto_added_stage_label".to_string(),
+                    ),
+                    ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                ])
+            };
+
+            let additional_contexts = if is_podman {
+                None
+            } else {
+                Some(HashMap::from([(
+                    "dev_containers_feature_content_source".to_string(),
+                    features_build_info
+                        .features_content_dir
+                        .display()
+                        .to_string(),
+                )]))
+            };
+
             let build_override = DockerComposeConfig {
                 name: None,
                 services: HashMap::from([(
@@ -775,24 +891,9 @@ impl DevContainerManifest {
                             context: Some(
                                 features_build_info.empty_context_dir.display().to_string(),
                             ),
-                            dockerfile: Some(
-                                features_build_info.dockerfile_path.display().to_string(),
-                            ),
-                            args: Some(HashMap::from([
-                                ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
-                                (
-                                    "_DEV_CONTAINERS_BASE_IMAGE".to_string(),
-                                    "dev_container_auto_added_stage_label".to_string(),
-                                ), // TODO Well this has gotta be cleaner
-                                ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()), // TODO this has to get wired up
-                            ])),
-                            additional_contexts: Some(HashMap::from([(
-                                "dev_containers_feature_content_source".to_string(),
-                                features_build_info
-                                    .features_content_dir
-                                    .display()
-                                    .to_string(),
-                            )])),
+                            dockerfile: Some(dockerfile_path.display().to_string()),
+                            args: Some(build_args),
+                            additional_contexts,
                         }),
                         volumes: Vec::new(),
                         ..Default::default()
@@ -833,6 +934,10 @@ impl DevContainerManifest {
             log::error!("Docker compose must have either image or dockerfile defined");
             return Err(DevContainerError::DevContainerParseFailed);
         };
+
+        let built_service_image = self
+            .update_remote_user_uid(built_service_image, Some(&features_build_info.image_tag))
+            .await?;
 
         let resources = self.build_merged_resources(built_service_image)?;
 
@@ -1030,6 +1135,7 @@ impl DevContainerManifest {
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
+        override_tag: Option<&str>,
     ) -> Result<DockerInspect, DevContainerError> {
         let dev_container = self.dev_container();
 
@@ -1116,7 +1222,9 @@ impl DevContainerManifest {
             DevContainerError::FilesystemError
         })?;
 
-        let updated_image_tag = format!("{}-uid", features_build_info.image_tag);
+        let updated_image_tag = override_tag
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| format!("{}-uid", features_build_info.image_tag));
 
         let mut command = Command::new(self.docker_client.docker_cli());
         command.args(["build"]);
@@ -1148,6 +1256,50 @@ impl DevContainerManifest {
         }
 
         self.docker_client.inspect_image(&updated_image_tag).await
+    }
+
+    async fn build_feature_content_image(&self) -> Result<(), DevContainerError> {
+        let Some(features_build_info) = &self.features_build_info else {
+            log::error!("Features build info not available for building feature content image");
+            return Err(DevContainerError::DevContainerParseFailed);
+        };
+        let features_content_dir = &features_build_info.features_content_dir;
+
+        let dockerfile_content = "FROM scratch\nCOPY . /tmp/build-features/\n";
+        let dockerfile_path = features_content_dir.join("Dockerfile.feature-content");
+
+        self.fs
+            .write(&dockerfile_path, dockerfile_content.as_bytes())
+            .await
+            .map_err(|e| {
+                log::error!("Failed to write feature content Dockerfile: {e}");
+                DevContainerError::FilesystemError
+            })?;
+
+        let mut command = Command::new(self.docker_client.docker_cli());
+        command.args([
+            "build",
+            "-t",
+            "dev_container_feature_content_temp",
+            "-f",
+            &dockerfile_path.display().to_string(),
+            &features_content_dir.display().to_string(),
+        ]);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error building feature content image: {e}");
+            DevContainerError::CommandFailed(self.docker_client.docker_cli())
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Feature content image build failed: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                self.docker_client.docker_cli(),
+            ));
+        }
+
+        Ok(())
     }
 
     fn create_docker_build(&self) -> Result<Command, DevContainerError> {
@@ -1613,6 +1765,8 @@ impl DevContainerManifest {
 pub(crate) struct FeaturesBuildInfo {
     /// Path to the generated Dockerfile.extended
     pub dockerfile_path: PathBuf,
+    /// Path to the generated non-BuildKit Dockerfile (for Podman compose)
+    pub dockerfile_no_buildkit_path: Option<PathBuf>,
     /// Path to the features content directory (used as a BuildKit build context)
     pub features_content_dir: PathBuf,
     /// Path to an empty directory used as the Docker build context
@@ -1865,6 +2019,21 @@ RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./{id},t
     )
 }
 
+fn generate_feature_layer_no_buildkit(consecutive_id: &str) -> String {
+    let source = format!("/tmp/build-features/{}", consecutive_id);
+    let dest = format!("{}/{}", FEATURES_CONTAINER_TEMP_DEST_FOLDER, consecutive_id);
+    format!(
+        r#"
+COPY --chown=root:root --from=dev_containers_feature_content_source {source} {dest}
+RUN chmod -R 0755 {dest} \
+ && cd {dest} \
+ && chmod +x ./devcontainer-features-install.sh \
+ && ./devcontainer-features-install.sh
+
+"#
+    )
+}
+
 // Dockerfile actions need to be moved to their own file
 fn dockerfile_alias(dockerfile_content: &str) -> Option<String> {
     dockerfile_content
@@ -1941,6 +2110,57 @@ fn generate_dockerfile_extended(
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
 COPY --from=dev_containers_feature_content_source ./devcontainer-features.builtin.env /tmp/build-features/
+RUN chmod -R 0755 /tmp/build-features/
+
+FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
+
+USER root
+
+RUN mkdir -p {dest}
+COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ {dest}
+
+RUN \
+echo "_CONTAINER_USER_HOME=$({container_home_cmd} | cut -d: -f6)" >> {dest}/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$({remote_home_cmd} | cut -d: -f6)" >> {dest}/devcontainer-features.builtin.env
+
+{feature_layers}
+
+ARG _DEV_CONTAINERS_IMAGE_USER=root
+USER $_DEV_CONTAINERS_IMAGE_USER
+"#
+    )
+}
+
+fn generate_dockerfile_extended_no_buildkit(
+    feature_layers: &str,
+    container_user: &str,
+    remote_user: &str,
+    dockerfile_content: Option<String>,
+) -> String {
+    let container_home_cmd = get_ent_passwd_shell_command(container_user);
+    let remote_home_cmd = get_ent_passwd_shell_command(remote_user);
+    let dockerfile_content = dockerfile_content
+        .map(|content| {
+            if dockerfile_alias(&content).is_some() {
+                content
+            } else {
+                dockerfile_inject_alias(&content, "dev_container_auto_added_stage_label")
+            }
+        })
+        .unwrap_or("".to_string());
+
+    let dest = FEATURES_CONTAINER_TEMP_DEST_FOLDER;
+
+    format!(
+        r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
+
+{dockerfile_content}
+
+FROM dev_container_feature_content_temp as dev_containers_feature_content_source
+
+FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
+USER root
+COPY --from=dev_containers_feature_content_source /tmp/build-features/devcontainer-features.builtin.env /tmp/build-features/
 RUN chmod -R 0755 /tmp/build-features/
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_target_stage
