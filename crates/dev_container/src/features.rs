@@ -85,7 +85,7 @@ impl FeatureManifest {
             .collect();
 
         match options {
-            FeatureOptions::Bool(_) => {} // TODO what?
+            FeatureOptions::Bool(_) => {}
             FeatureOptions::String(version) => {
                 merged.insert("VERSION".to_string(), version.clone());
             }

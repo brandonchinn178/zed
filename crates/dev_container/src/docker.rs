@@ -17,10 +17,17 @@ pub(crate) struct DockerPs {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
+pub(crate) struct DockerState {
+    pub(crate) running: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspect {
     pub(crate) id: String,
     pub(crate) config: DockerInspectConfig,
     pub(crate) mounts: Option<Vec<DockerInspectMount>>,
+    pub(crate) state: Option<DockerState>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -40,7 +47,6 @@ pub(crate) struct DockerInspectConfig {
     pub(crate) image_user: Option<String>,
 }
 
-// TODO can I replace this with MountDefinition? Or should they be separated by Docker vs DevContainer?
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspectMount {
@@ -57,7 +63,7 @@ pub(crate) struct DockerComposeServiceBuild {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) args: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) additional_contexts: Option<HashMap<String, String>>, // TODO you gotta address this when you reformat feature stuff
+    pub(crate) additional_contexts: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -95,6 +101,12 @@ pub(crate) struct Docker {
     docker_cli: String,
 }
 
+impl DockerInspect {
+    pub(crate) fn is_running(&self) -> bool {
+        self.state.as_ref().map_or(false, |s| s.running)
+    }
+}
+
 impl Docker {
     pub(crate) fn new(docker_cli: &str) -> Self {
         Self {
@@ -128,10 +140,7 @@ impl Docker {
         Ok(())
     }
 
-    pub(crate) async fn inspect_image(
-        &self,
-        image: &String,
-    ) -> Result<DockerInspect, DevContainerError> {
+    pub(crate) async fn inspect(&self, image: &String) -> Result<DockerInspect, DevContainerError> {
         // Try to pull the image, continue on failure; Image may be local only, or network unavailable
         self.pull_image(image).await.ok();
 
@@ -264,6 +273,27 @@ impl Docker {
 
         Ok(())
     }
+
+    pub(crate) async fn start_container(&self, id: &str) -> Result<(), DevContainerError> {
+        let mut command = Command::new(&self.docker_cli);
+
+        command.args(&["start", id]);
+
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running docker start: {e}");
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker start: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 fn deserialize_metadata<'de, D>(
@@ -286,10 +316,10 @@ where
     }
 }
 
-// TODO this needs some work, because we should be able to find a mount that works as an ancestor to this remote dir
 // E.g. it might be /Source/myproject:workspaces/myproject
 // But it might also be Source/:workspaces/
 // In the latter case, we want to found that mount destination (e.g. workspaces/), and fill in the rest of the path to the workspace (so that it's workspaces/myproject)
+// TODO test more
 pub(crate) fn get_remote_dir_from_config(
     config: &DockerInspect,
     local_dir: String,

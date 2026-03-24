@@ -145,9 +145,8 @@ impl DevContainerManifest {
         labels
     }
 
-    fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
-        let mut replaced_content = self
-            .raw_config
+    fn parse_nonremote_vars_for_content(&self, content: &str) -> Result<String, DevContainerError> {
+        let mut replaced_content = content
             .replace("${devcontainerId}", &self.devcontainer_id())
             .replace(
                 "${containerWorkspaceFolderBasename}",
@@ -170,6 +169,11 @@ impl DevContainerManifest {
             replaced_content = replaced_content.replace(&find, &v);
         }
 
+        Ok(replaced_content)
+    }
+
+    fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
+        let replaced_content = self.parse_nonremote_vars_for_content(&self.raw_config)?;
         let parsed_config = deserialize_devcontainer_json(&replaced_content)?;
 
         self.config = ConfigStatus::VariableParsed(parsed_config);
@@ -301,7 +305,7 @@ impl DevContainerManifest {
         };
         let root_image_tag = self.get_base_image_from_config().await?;
 
-        let root_image = self.docker_client.inspect_image(&root_image_tag).await?;
+        let root_image = self.docker_client.inspect(&root_image_tag).await?;
 
         if dev_container.build_type() == DevContainerBuildType::Image
             && !dev_container.has_features()
@@ -470,8 +474,10 @@ impl DevContainerManifest {
                 DevContainerError::FilesystemError
             })?;
 
-            let feature_json: DevContainerFeatureJson = serde_json_lenient::from_str(&contents)
-                .map_err(|e| {
+            let contents_parsed = self.parse_nonremote_vars_for_content(&contents)?;
+
+            let feature_json: DevContainerFeatureJson =
+                serde_json_lenient::from_str(&contents_parsed).map_err(|e| {
                     log::error!("Failed to parse devcontainer-feature.json: {e}");
                     DevContainerError::ResourceFetchFailed
                 })?;
@@ -617,7 +623,12 @@ impl DevContainerManifest {
     }
 
     async fn build_resources(&self) -> Result<DevContainerBuildResources, DevContainerError> {
-        // TODO this probably shouldn't proceed until parsed either
+        if let ConfigStatus::Deserialized(_) = &self.config {
+            log::error!(
+                "Dev container has not yet been parsed for variable expansion. Cannot yet build resources"
+            );
+            return Err(DevContainerError::DevContainerParseFailed);
+        }
         let dev_container = self.dev_container();
         match dev_container.build_type() {
             DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
@@ -680,10 +691,16 @@ impl DevContainerManifest {
         })
     }
 
-    // TODO this could be done earlier in the process
     async fn docker_compose_manifest(&self) -> Result<DockerComposeResources, DevContainerError> {
-        // TODO this probably shouldn't proceed until parsed either
-        let dev_container = self.dev_container();
+        let dev_container = match &self.config {
+            ConfigStatus::Deserialized(_) => {
+                log::error!(
+                    "Dev container has not yet been parsed for variable expansion. Cannot yet get docker compose files"
+                );
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            ConfigStatus::VariableParsed(dev_container) => dev_container,
+        };
         let Some(docker_compose_files) = dev_container.docker_compose_file.clone() else {
             return Err(DevContainerError::DevContainerParseFailed);
         };
@@ -709,8 +726,15 @@ impl DevContainerManifest {
     async fn build_and_extend_compose_files(
         &self,
     ) -> Result<DockerComposeResources, DevContainerError> {
-        // TODO this probably shouldn't proceed until parsed either
-        let dev_container = self.dev_container();
+        let dev_container = match &self.config {
+            ConfigStatus::Deserialized(_) => {
+                log::error!(
+                    "Dev container has not yet been parsed for variable expansion. Cannot yet build from compose files"
+                );
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            ConfigStatus::VariableParsed(dev_container) => dev_container,
+        };
 
         let Some(features_build_info) = &self.features_build_info else {
             log::error!(
@@ -722,110 +746,7 @@ impl DevContainerManifest {
 
         let (main_service_name, main_service) =
             find_primary_service(&docker_compose_resources, self)?;
-        let built_service_image = if let Some(image) = &main_service.image {
-            if dev_container
-                .features
-                .as_ref()
-                .is_none_or(|features| features.is_empty())
-            {
-                self.docker_client.inspect_image(image).await?
-            } else {
-                let is_podman = self.docker_client.is_podman();
-
-                if is_podman {
-                    self.build_feature_content_image().await?;
-                }
-
-                let dockerfile_path = if is_podman {
-                    features_build_info
-                        .dockerfile_no_buildkit_path
-                        .as_ref()
-                        .unwrap_or(&features_build_info.dockerfile_path)
-                } else {
-                    &features_build_info.dockerfile_path
-                };
-
-                let build_args = if is_podman {
-                    HashMap::from([
-                        ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
-                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
-                    ])
-                } else {
-                    HashMap::from([
-                        ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
-                        ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
-                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
-                    ])
-                };
-
-                let additional_contexts = if is_podman {
-                    None
-                } else {
-                    Some(HashMap::from([(
-                        "dev_containers_feature_content_source".to_string(),
-                        features_build_info
-                            .features_content_dir
-                            .display()
-                            .to_string(),
-                    )]))
-                };
-
-                let build_override = DockerComposeConfig {
-                    name: None,
-                    services: HashMap::from([(
-                        main_service_name.clone(),
-                        DockerComposeService {
-                            image: Some(features_build_info.image_tag.clone()),
-                            entrypoint: None,
-                            cap_add: None,
-                            security_opt: None,
-                            labels: None,
-                            build: Some(DockerComposeServiceBuild {
-                                context: Some(
-                                    features_build_info.empty_context_dir.display().to_string(),
-                                ),
-                                dockerfile: Some(dockerfile_path.display().to_string()),
-                                args: Some(build_args),
-                                additional_contexts,
-                            }),
-                            volumes: Vec::new(),
-                            ..Default::default()
-                        },
-                    )]),
-                    volumes: HashMap::new(),
-                };
-
-                let temp_base = std::env::temp_dir().join("devcontainer-zed");
-                let config_location = temp_base.join("docker_compose_build.json");
-
-                let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
-                    log::error!("Error serializing docker compose runtime override: {e}");
-                    DevContainerError::DevContainerParseFailed
-                })?;
-
-                self.fs
-                    .write(&config_location, config_json.as_bytes())
-                    .await
-                    .map_err(|e| {
-                        log::error!("Error writing the runtime override file: {e}");
-                        DevContainerError::FilesystemError
-                    })?;
-
-                docker_compose_resources.files.push(config_location);
-
-                // TODO project name how
-                self.docker_client
-                    .docker_compose_build(
-                        &docker_compose_resources.files,
-                        "rustwebstarter_devcontainer",
-                    )
-                    .await?;
-
-                self.docker_client
-                    .inspect_image(&features_build_info.image_tag)
-                    .await?
-            }
-        } else if main_service // TODO this has to be reversed, I think?
+        let built_service_image = if main_service
             .build
             .as_ref()
             .map(|b| b.dockerfile.as_ref())
@@ -920,16 +841,111 @@ impl DevContainerManifest {
 
             docker_compose_resources.files.push(config_location);
 
-            // TODO project name how
             self.docker_client
-                .docker_compose_build(
-                    &docker_compose_resources.files,
-                    "rustwebstarter_devcontainer",
-                )
+                .docker_compose_build(&docker_compose_resources.files, &self.project_name())
                 .await?;
             self.docker_client
-                .inspect_image(&features_build_info.image_tag)
+                .inspect(&features_build_info.image_tag)
                 .await?
+        } else if let Some(image) = &main_service.image {
+            if dev_container
+                .features
+                .as_ref()
+                .is_none_or(|features| features.is_empty())
+            {
+                self.docker_client.inspect(image).await?
+            } else {
+                let is_podman = self.docker_client.is_podman();
+
+                if is_podman {
+                    self.build_feature_content_image().await?;
+                }
+
+                let dockerfile_path = if is_podman {
+                    features_build_info
+                        .dockerfile_no_buildkit_path
+                        .as_ref()
+                        .unwrap_or(&features_build_info.dockerfile_path)
+                } else {
+                    &features_build_info.dockerfile_path
+                };
+
+                let build_args = if is_podman {
+                    HashMap::from([
+                        ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
+                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                    ])
+                } else {
+                    HashMap::from([
+                        ("BUILDKIT_INLINE_CACHE".to_string(), "1".to_string()),
+                        ("_DEV_CONTAINERS_BASE_IMAGE".to_string(), image.clone()),
+                        ("_DEV_CONTAINERS_IMAGE_USER".to_string(), "root".to_string()),
+                    ])
+                };
+
+                let additional_contexts = if is_podman {
+                    None
+                } else {
+                    Some(HashMap::from([(
+                        "dev_containers_feature_content_source".to_string(),
+                        features_build_info
+                            .features_content_dir
+                            .display()
+                            .to_string(),
+                    )]))
+                };
+
+                let build_override = DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([(
+                        main_service_name.clone(),
+                        DockerComposeService {
+                            image: Some(features_build_info.image_tag.clone()),
+                            entrypoint: None,
+                            cap_add: None,
+                            security_opt: None,
+                            labels: None,
+                            build: Some(DockerComposeServiceBuild {
+                                context: Some(
+                                    features_build_info.empty_context_dir.display().to_string(),
+                                ),
+                                dockerfile: Some(dockerfile_path.display().to_string()),
+                                args: Some(build_args),
+                                additional_contexts,
+                            }),
+                            volumes: Vec::new(),
+                            ..Default::default()
+                        },
+                    )]),
+                    volumes: HashMap::new(),
+                };
+
+                let temp_base = std::env::temp_dir().join("devcontainer-zed");
+                let config_location = temp_base.join("docker_compose_build.json");
+
+                let config_json = serde_json_lenient::to_string(&build_override).map_err(|e| {
+                    log::error!("Error serializing docker compose runtime override: {e}");
+                    DevContainerError::DevContainerParseFailed
+                })?;
+
+                self.fs
+                    .write(&config_location, config_json.as_bytes())
+                    .await
+                    .map_err(|e| {
+                        log::error!("Error writing the runtime override file: {e}");
+                        DevContainerError::FilesystemError
+                    })?;
+
+                docker_compose_resources.files.push(config_location);
+
+                self.docker_client
+                    .docker_compose_build(&docker_compose_resources.files, &self.project_name())
+                    .await?;
+
+                self.docker_client
+                    .inspect(&features_build_info.image_tag)
+                    .await?
+            }
         } else {
             log::error!("Docker compose must have either image or dockerfile defined");
             return Err(DevContainerError::DevContainerParseFailed);
@@ -1080,15 +1096,22 @@ impl DevContainerManifest {
     }
 
     async fn build_docker_image(&self) -> Result<DockerInspect, DevContainerError> {
-        // TODO this probably shouldn't proceed until parsed either
-        let dev_container = self.dev_container();
+        let dev_container = match &self.config {
+            ConfigStatus::Deserialized(_) => {
+                log::error!(
+                    "Dev container has not yet been parsed for variable expansion. Cannot yet build image"
+                );
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            ConfigStatus::VariableParsed(dev_container) => dev_container,
+        };
 
         match dev_container.build_type() {
             DevContainerBuildType::Image => {
                 let Some(image_tag) = &dev_container.image else {
                     return Err(DevContainerError::DevContainerParseFailed);
                 };
-                let base_image = self.docker_client.inspect_image(image_tag).await?;
+                let base_image = self.docker_client.inspect(image_tag).await?;
                 if dev_container
                     .features
                     .as_ref()
@@ -1126,7 +1149,7 @@ impl DevContainerManifest {
         };
         let image = self
             .docker_client
-            .inspect_image(&features_build_info.image_tag)
+            .inspect(&features_build_info.image_tag)
             .await?;
 
         Ok(image)
@@ -1255,7 +1278,7 @@ impl DevContainerManifest {
             ));
         }
 
-        self.docker_client.inspect_image(&updated_image_tag).await
+        self.docker_client.inspect(&updated_image_tag).await
     }
 
     async fn build_feature_content_image(&self) -> Result<(), DevContainerError> {
@@ -1303,8 +1326,15 @@ impl DevContainerManifest {
     }
 
     fn create_docker_build(&self) -> Result<Command, DevContainerError> {
-        // TODO this probably shouldn't proceed until parsed either
-        let dev_container = self.dev_container();
+        let dev_container = match &self.config {
+            ConfigStatus::Deserialized(_) => {
+                log::error!(
+                    "Dev container has not yet been parsed for variable expansion. Cannot yet proceed with docker build"
+                );
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            ConfigStatus::VariableParsed(dev_container) => dev_container,
+        };
 
         let Some(features_build_info) = &self.features_build_info else {
             log::error!(
@@ -1392,8 +1422,7 @@ impl DevContainerManifest {
         resources: DockerComposeResources,
     ) -> Result<DockerInspect, DevContainerError> {
         let mut command = Command::new(self.docker_client.docker_cli());
-        // TODO project name how
-        command.args(&["compose", "--project-name", "rustwebstarter_devcontainer"]);
+        command.args(&["compose", "--project-name", &self.project_name()]);
         for docker_compose_file in resources.files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
@@ -1416,7 +1445,7 @@ impl DevContainerManifest {
 
         if let Some(docker_ps) = self.check_for_existing_container().await? {
             log::info!("Found newly created dev container");
-            return self.docker_client.inspect_image(&docker_ps.id).await;
+            return self.docker_client.inspect(&docker_ps.id).await;
         }
 
         log::error!("Could not find existing container after docker compose up");
@@ -1448,7 +1477,7 @@ impl DevContainerManifest {
             log::error!("Could not locate container just created");
             return Err(DevContainerError::DevContainerParseFailed);
         };
-        self.docker_client.inspect_image(&docker_ps.id).await
+        self.docker_client.inspect(&docker_ps.id).await
     }
 
     fn local_workspace_folder(&self) -> String {
@@ -1479,25 +1508,26 @@ impl DevContainerManifest {
         })
     }
 
-    fn remote_workspace_mount(&self) -> Result<PathBuf, DevContainerError> {
+    fn remote_workspace_mount(&self) -> Result<MountDefinition, DevContainerError> {
         if let Some(mount) = &self.dev_container().workspace_mount {
-            return Ok(PathBuf::from(&mount.target));
+            return Ok(mount.clone());
         }
         let Some(project_directory_name) = self.local_project_directory.file_name() else {
             return Err(DevContainerError::DevContainerParseFailed);
         };
 
-        Ok(PathBuf::from(format!(
-            "/workspaces/{}",
-            project_directory_name.display()
-        )))
+        Ok(MountDefinition {
+            source: self.local_workspace_folder(),
+            target: format!("/workspaces/{}", project_directory_name.display()),
+            mount_type: None,
+        })
     }
 
     fn create_docker_run_command(
         &self,
         build_resources: DockerBuildResources,
     ) -> Result<Command, DevContainerError> {
-        let remote_workspace_folder = self.remote_workspace_mount()?;
+        let remote_workspace_mount = self.remote_workspace_mount()?;
 
         let docker_cli = self.docker_client.docker_cli();
         let mut command = Command::new(&docker_cli);
@@ -1515,20 +1545,11 @@ impl DevContainerManifest {
         command.arg("--sig-proxy=false");
         command.arg("-d");
         command.arg("--mount");
-        // TODO I think we have to grab the local_project from workspace mount if it's in place as well
-        command.arg(format!(
-            "type=bind,source={},target={},consistency=cached",
-            self.local_project_directory.display(),
-            remote_workspace_folder.display(),
-        ));
+        command.arg(remote_workspace_mount.to_string());
 
         for mount in &build_resources.additional_mounts {
             command.arg("--mount");
-            command.arg(
-                mount
-                    .to_string()
-                    .replace("${devcontainerId}", "devcontainer123"), // TODO So this is what we're doing tomorrow
-            );
+            command.arg(mount.to_string());
         }
 
         for (key, val) in self.identifying_labels() {
@@ -1711,13 +1732,13 @@ impl DevContainerManifest {
     ) -> Result<Option<DevContainerUp>, DevContainerError> {
         if let Some(docker_ps) = self.check_for_existing_container().await? {
             log::info!("Dev container already found. Proceeding with it");
-            //     2. If exists and running, return it
-            //
-            // TODO this moves into DevContainerManifest
 
-            let docker_inspect = self.docker_client.inspect_image(&docker_ps.id).await?;
-            //     3. If exists and not running, start it
-            log::info!("TODO start the container if it's not running");
+            let docker_inspect = self.docker_client.inspect(&docker_ps.id).await?;
+
+            if !docker_inspect.is_running() {
+                log::info!("Container not running. Will attempt to start, and then proceed");
+                self.docker_client.start_container(&docker_ps.id).await?;
+            }
 
             let remote_user = get_remote_user_from_config(&docker_inspect, self)?;
 
@@ -1753,6 +1774,17 @@ impl DevContainerManifest {
                     .collect(),
             )
             .await
+    }
+
+    fn project_name(&self) -> String {
+        if let Some(name) = &self.dev_container().name {
+            safe_id_lower(name)
+        } else {
+            let alternate_name = &self
+                .local_workspace_base_name()
+                .unwrap_or(self.local_workspace_folder());
+            safe_id_lower(alternate_name)
+        }
     }
 }
 
@@ -1850,7 +1882,6 @@ fn find_primary_service(
 
 /// Destination folder inside the container where feature content is staged during build.
 /// Mirrors the CLI's `FEATURES_CONTAINER_TEMP_DEST_FOLDER`.
-// TODO does this need to be more generalized
 const FEATURES_CONTAINER_TEMP_DEST_FOLDER: &str = "/tmp/dev-container-features";
 
 /// Escapes single quotes for use inside shell single-quoted strings.
@@ -2079,15 +2110,12 @@ fn generate_dockerfile_extended(
     feature_layers: &str,
     container_user: &str,
     remote_user: &str,
-    // TODO: use this to optionally include in the template
     // TODO also looks like this needs a test
-    // From here, you really just need to change the docker build args to include any args from the build object, and point at the .devcontainer folder instead of the empty dir
     dockerfile_content: Option<String>,
 ) -> String {
     let container_home_cmd = get_ent_passwd_shell_command(container_user);
     let remote_home_cmd = get_ent_passwd_shell_command(remote_user);
-    // So what happens is the reference implementation parses this content and aliases the "FROM" statement to `dev_container_auto_added_stage_label`, then using that as the _DEV_CONTAINERS_BASE_IMAGE arg
-    // This is going to require actually parsing Dockerfile. Which means I probably need a docker crate. This is the worst.
+
     let dockerfile_content = dockerfile_content
         .map(|content| {
             if dockerfile_alias(&content).is_some() {
@@ -2496,6 +2524,7 @@ mod test {
                 image_user: None,
             },
             mounts: None,
+            state: None,
         };
 
         let remote_user =
@@ -2524,6 +2553,7 @@ mod test {
                 image_user: None,
             },
             mounts: None,
+            state: None,
         };
 
         let remote_user = get_remote_user_from_config(&given_docker_config, &devcontainer_manifest);

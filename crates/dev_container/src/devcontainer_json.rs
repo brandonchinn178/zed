@@ -66,8 +66,6 @@ pub(crate) struct MountDefinition {
     pub(crate) mount_type: Option<String>,
 }
 
-// TODO generalize this to include DevContainer predefined variables
-// Probably just need to create a new crate for this
 impl Display for MountDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -194,8 +192,8 @@ pub(crate) struct DevContainer {
     pub(crate) name: Option<String>,
     pub(crate) remote_user: Option<String>,
     forward_ports: Option<Vec<ForwardPort>>,
-    ports_attributes: Option<HashMap<String, PortAttributes>>, // TODO key here should be the same object as what's used above for forwardPorts
-    other_ports_attributes: Option<PortAttributes>, // TODO I think that's right? Confirm the spec when you get to it
+    ports_attributes: Option<HashMap<String, PortAttributes>>,
+    other_ports_attributes: Option<PortAttributes>,
     container_env: Option<HashMap<String, String>>,
     pub(crate) remote_env: Option<HashMap<String, String>>,
     pub(crate) container_user: Option<String>,
