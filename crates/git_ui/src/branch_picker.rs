@@ -486,6 +486,10 @@ impl BranchListDelegate {
             let is_remote;
             let result = match &entry {
                 Entry::Branch { branch, .. } => {
+                    if branch.is_head {
+                        return Ok(());
+                    }
+
                     is_remote = branch.is_remote();
                     repo.update(cx, |repo, _| {
                         repo.delete_branch(is_remote, branch.name().to_string())
@@ -1164,7 +1168,12 @@ impl PickerDelegate for BranchListDelegate {
                             .on_click(|_, window, cx| {
                                 window
                                     .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
-                            }),
+                            })
+                            .disabled(
+                                selected_entry
+                                    .and_then(|entry| entry.as_branch())
+                                    .is_some_and(|branch| branch.is_head),
+                            ),
                     )
                     .child(
                         Button::new("select_branch", "Select")

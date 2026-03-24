@@ -19,7 +19,7 @@ use remote_connection::{RemoteConnectionModal, connect};
 use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPromptErr};
 
 use crate::git_panel::show_error_toast;
@@ -452,7 +452,7 @@ impl WorktreeListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
-        if entry.is_new {
+        if entry.is_new || self.is_only_visible_project_worktree(&entry.worktree.path, cx) {
             return;
         }
         let Some(repo) = self.repo.clone() else {
@@ -497,6 +497,24 @@ impl WorktreeListDelegate {
             anyhow::Ok(())
         })
         .detach();
+    }
+
+    fn is_only_visible_project_worktree(&self, worktree_path: &PathBuf, cx: &App) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            debug_panic!("Workspae should always be available or else the picker would be closed");
+            return false;
+        };
+
+        let visible_worktree_paths = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>()
+        });
+
+        visible_worktree_paths.len() == 1 && visible_worktree_paths.first() == Some(worktree_path)
     }
 }
 
@@ -771,12 +789,16 @@ impl PickerDelegate for WorktreeListDelegate {
 
         let focus_handle = self.focus_handle.clone();
 
+        let delete_disabled =
+            !entry.is_new && self.is_only_visible_project_worktree(&entry.worktree.path, cx);
+
         let delete_button = |entry_ix: usize| {
             IconButton::new(("delete-worktree", entry_ix), IconName::Trash)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
                     Tooltip::for_action_in("Delete Worktree", &DeleteWorktree, &focus_handle, cx)
                 })
+                .disabled(delete_disabled)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.delegate.delete_at(entry_ix, window, cx);
                 }))
@@ -857,6 +879,9 @@ impl PickerDelegate for WorktreeListDelegate {
         let focus_handle = self.focus_handle.clone();
         let selected_entry = self.matches.get(self.selected_index);
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
+        let delete_disabled = selected_entry.is_some_and(|entry| {
+            !entry.is_new && self.is_only_visible_project_worktree(&entry.worktree.path, cx)
+        });
 
         let footer_container = h_flex()
             .w_full()
@@ -912,7 +937,8 @@ impl PickerDelegate for WorktreeListDelegate {
                             )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
-                            }),
+                            })
+                            .disabled(delete_disabled),
                     )
                     .child(
                         Button::new("open-in-new-window", "Open in New Window")
