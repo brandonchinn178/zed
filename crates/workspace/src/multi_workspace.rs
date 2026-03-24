@@ -53,8 +53,13 @@ pub trait Sidebar: Focusable + Render + Sized {
     fn is_threads_list_view_active(&self) -> bool {
         true
     }
-    /// Makes focus reset bac to the search editor upon toggling the sidebar from outside
+    /// Makes focus reset back to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    /// Returns a view to render as a window-level overlay (e.g. the thread switcher).
+    fn overlay_view(&self) -> Option<AnyView> {
+        None
+    }
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -68,6 +73,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn entity_id(&self) -> EntityId;
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
+    fn overlay_view(&self, cx: &App) -> Option<AnyView>;
 }
 
 #[derive(Clone)]
@@ -115,6 +121,10 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.read(cx).is_threads_list_view_active()
+    }
+
+    fn overlay_view(&self, cx: &App) -> Option<AnyView> {
+        self.read(cx).overlay_view()
     }
 }
 
@@ -883,7 +893,39 @@ impl Render for MultiWorkspace {
                         .overflow_hidden()
                         .child(self.workspace().clone()),
                 )
-                .child(self.workspace().read(cx).modal_layer.clone()),
+                .child(self.workspace().read(cx).modal_layer.clone())
+                .children(
+                    self.sidebar
+                        .as_ref()
+                        .and_then(|s| s.overlay_view(cx))
+                        .map(|view| {
+                            deferred(
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .inset_0()
+                                    .occlude()
+                                    .child(
+                                        v_flex()
+                                            .h(px(0.0))
+                                            .top_20()
+                                            .items_center()
+                                            .child(
+                                                h_flex()
+                                                    .occlude()
+                                                    .child(view)
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        |_, _, cx| {
+                                                            cx.stop_propagation();
+                                                        },
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            .with_priority(2)
+                        }),
+                ),
             window,
             cx,
             Tiling {
