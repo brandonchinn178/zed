@@ -12,11 +12,30 @@ type CountsDelta = HashMap<String, isize>;
 /// Context characters needed on each side of a change to capture all affected n-grams
 const CONTEXT_CHARS: usize = CHR_F_CHAR_ORDER - 1;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClassificationMetrics {
     pub true_positives: usize,
     pub false_positives: usize,
     pub false_negatives: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenClass {
+    TruePositive,
+    FalsePositive,
+    FalseNegative,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClassifiedToken {
+    pub token: String,
+    pub class: TokenClass,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TokenClassificationDetail {
+    pub expected_tokens: Vec<ClassifiedToken>,
+    pub actual_tokens: Vec<ClassifiedToken>,
 }
 
 impl ClassificationMetrics {
@@ -48,6 +67,12 @@ impl ClassificationMetrics {
         }
     }
 
+    pub fn accumulate(&mut self, other: &ClassificationMetrics) {
+        self.true_positives += other.true_positives;
+        self.false_positives += other.false_positives;
+        self.false_negatives += other.false_negatives;
+    }
+
     pub fn precision(&self) -> f64 {
         if self.true_positives + self.false_positives == 0 {
             0.0
@@ -73,6 +98,19 @@ impl ClassificationMetrics {
             2.0 * precision * recall / (precision + recall)
         }
     }
+}
+
+pub fn compare_classification_metrics(
+    left: &ClassificationMetrics,
+    right: &ClassificationMetrics,
+) -> std::cmp::Ordering {
+    left.f1()
+        .total_cmp(&right.f1())
+        .then_with(|| left.precision().total_cmp(&right.precision()))
+        .then_with(|| left.recall().total_cmp(&right.recall()))
+        .then_with(|| left.true_positives.cmp(&right.true_positives))
+        .then_with(|| right.false_positives.cmp(&left.false_positives))
+        .then_with(|| right.false_negatives.cmp(&left.false_negatives))
 }
 
 enum ChrfWhitespace {
@@ -525,63 +563,137 @@ pub struct TokenChangeCounts {
     pub deleted_tokens: usize,
 }
 
-/// Counts the number of inserted and deleted tokens in a unified diff patch.
-///
-/// Tokens are words and whitespace sequences (as defined by `word_diff::tokenize`).
-/// Within each hunk, the old (`-`) and new (`+`) lines are compared at the token level
-/// using an LCS-based diff, so modified lines only count the actually changed tokens
-/// rather than the entire line.
-pub fn count_patch_token_changes(patch: &str) -> TokenChangeCounts {
-    let mut counts = TokenChangeCounts::default();
+fn classify_token_diff_ops(
+    expected_tokens: &[&str],
+    actual_tokens: &[&str],
+) -> ClassificationMetrics {
+    classify_token_diff_ops_detailed(expected_tokens, actual_tokens).0
+}
+
+fn classify_token_diff_ops_detailed(
+    expected_tokens: &[&str],
+    actual_tokens: &[&str],
+) -> (ClassificationMetrics, TokenClassificationDetail) {
+    let mut metrics = ClassificationMetrics::default();
+    let mut detail = TokenClassificationDetail::default();
+
+    for operation in diff_tokens(expected_tokens, actual_tokens) {
+        match operation {
+            DiffOp::Equal {
+                old_start,
+                old_end,
+                new_start,
+                new_end,
+            } => {
+                metrics.true_positives += old_end - old_start;
+                for token in &expected_tokens[old_start..old_end] {
+                    detail.expected_tokens.push(ClassifiedToken {
+                        token: (*token).to_string(),
+                        class: TokenClass::TruePositive,
+                    });
+                }
+                for token in &actual_tokens[new_start..new_end] {
+                    detail.actual_tokens.push(ClassifiedToken {
+                        token: (*token).to_string(),
+                        class: TokenClass::TruePositive,
+                    });
+                }
+            }
+            DiffOp::Delete(start, end) => {
+                metrics.false_negatives += end - start;
+                for token in &expected_tokens[start..end] {
+                    detail.expected_tokens.push(ClassifiedToken {
+                        token: (*token).to_string(),
+                        class: TokenClass::FalseNegative,
+                    });
+                }
+            }
+            DiffOp::Insert(start, end) => {
+                metrics.false_positives += end - start;
+                for token in &actual_tokens[start..end] {
+                    detail.actual_tokens.push(ClassifiedToken {
+                        token: (*token).to_string(),
+                        class: TokenClass::FalsePositive,
+                    });
+                }
+            }
+            DiffOp::Replace {
+                old_start,
+                old_end,
+                new_start,
+                new_end,
+            } => {
+                metrics.false_negatives += old_end - old_start;
+                metrics.false_positives += new_end - new_start;
+
+                for token in &expected_tokens[old_start..old_end] {
+                    detail.expected_tokens.push(ClassifiedToken {
+                        token: (*token).to_string(),
+                        class: TokenClass::FalseNegative,
+                    });
+                }
+                for token in &actual_tokens[new_start..new_end] {
+                    detail.actual_tokens.push(ClassifiedToken {
+                        token: (*token).to_string(),
+                        class: TokenClass::FalsePositive,
+                    });
+                }
+            }
+        }
+    }
+
+    (metrics, detail)
+}
+
+fn classify_token_texts(expected_text: &str, actual_text: &str) -> ClassificationMetrics {
+    let expected_tokens = tokenize(expected_text);
+    let actual_tokens = tokenize(actual_text);
+    classify_token_diff_ops(&expected_tokens, &actual_tokens)
+}
+
+fn classify_token_texts_detailed(
+    expected_text: &str,
+    actual_text: &str,
+) -> (ClassificationMetrics, TokenClassificationDetail) {
+    let expected_tokens = tokenize(expected_text);
+    let actual_tokens = tokenize(actual_text);
+    classify_token_diff_ops_detailed(&expected_tokens, &actual_tokens)
+}
+
+fn strip_patch_line_prefix(line: &str) -> &str {
+    line.strip_prefix('-')
+        .or_else(|| line.strip_prefix('+'))
+        .unwrap_or(line)
+}
+
+fn extract_patch_change_blocks(patch: &str) -> Vec<(String, String)> {
+    let mut blocks = Vec::new();
     let mut old_lines: Vec<&str> = Vec::new();
     let mut new_lines: Vec<&str> = Vec::new();
 
-    let flush =
-        |old_lines: &mut Vec<&str>, new_lines: &mut Vec<&str>, counts: &mut TokenChangeCounts| {
-            if old_lines.is_empty() && new_lines.is_empty() {
-                return;
-            }
+    let flush = |old_lines: &mut Vec<&str>,
+                 new_lines: &mut Vec<&str>,
+                 blocks: &mut Vec<(String, String)>| {
+        if old_lines.is_empty() && new_lines.is_empty() {
+            return;
+        }
 
-            let old_text: String = old_lines
-                .iter()
-                .map(|line| if line.len() > 1 { &line[1..] } else { "" })
-                .collect::<Vec<_>>()
-                .join("\n");
+        let old_text = old_lines
+            .iter()
+            .map(|line| strip_patch_line_prefix(line))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-            let new_text: String = new_lines
-                .iter()
-                .map(|line| if line.len() > 1 { &line[1..] } else { "" })
-                .collect::<Vec<_>>()
-                .join("\n");
+        let new_text = new_lines
+            .iter()
+            .map(|line| strip_patch_line_prefix(line))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-            let old_tokens = tokenize(&old_text);
-            let new_tokens = tokenize(&new_text);
-            let ops = diff_tokens(&old_tokens, &new_tokens);
-
-            for op in ops {
-                match op {
-                    DiffOp::Equal(..) => {}
-                    DiffOp::Delete(start, end) => {
-                        counts.deleted_tokens += end - start;
-                    }
-                    DiffOp::Insert(start, end) => {
-                        counts.inserted_tokens += end - start;
-                    }
-                    DiffOp::Replace {
-                        old_start,
-                        old_end,
-                        new_start,
-                        new_end,
-                    } => {
-                        counts.deleted_tokens += old_end - old_start;
-                        counts.inserted_tokens += new_end - new_start;
-                    }
-                }
-            }
-
-            old_lines.clear();
-            new_lines.clear();
-        };
+        blocks.push((old_text, new_text));
+        old_lines.clear();
+        new_lines.clear();
+    };
 
     for line in patch.lines() {
         if line.starts_with("---")
@@ -590,17 +702,102 @@ pub fn count_patch_token_changes(patch: &str) -> TokenChangeCounts {
             || line.starts_with("diff ")
             || line.starts_with("index ")
         {
-            flush(&mut old_lines, &mut new_lines, &mut counts);
+            flush(&mut old_lines, &mut new_lines, &mut blocks);
         } else if line.starts_with('-') {
             old_lines.push(line);
         } else if line.starts_with('+') {
             new_lines.push(line);
         } else {
-            flush(&mut old_lines, &mut new_lines, &mut counts);
+            flush(&mut old_lines, &mut new_lines, &mut blocks);
         }
     }
 
-    flush(&mut old_lines, &mut new_lines, &mut counts);
+    flush(&mut old_lines, &mut new_lines, &mut blocks);
+    blocks
+}
+
+fn collect_patch_side_text<F>(patch: &str, mut select_side: F) -> String
+where
+    F: FnMut(&(String, String)) -> &str,
+{
+    let mut text = String::new();
+
+    for block in extract_patch_change_blocks(patch) {
+        let block_text = select_side(&block);
+        if block_text.is_empty() {
+            continue;
+        }
+
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(block_text);
+    }
+
+    text
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenMatchDebugReport {
+    pub expected_deleted_text: String,
+    pub actual_deleted_text: String,
+    pub expected_inserted_text: String,
+    pub actual_inserted_text: String,
+    pub deleted: TokenClassificationDetail,
+    pub inserted: TokenClassificationDetail,
+    pub metrics: ClassificationMetrics,
+}
+
+/// Computes token-match precision/recall counts between expected and actual patches.
+///
+/// Deletions and insertions are aligned independently, then their counts are summed.
+/// Tokenization uses `word_diff::tokenize`, so identifiers, whitespace runs, and punctuation
+/// are compared using the same token boundaries as the word-diff view.
+pub fn token_match(expected_patch: &str, actual_patch: &str) -> ClassificationMetrics {
+    token_match_debug_report(expected_patch, actual_patch).metrics
+}
+
+pub fn token_match_debug_report(expected_patch: &str, actual_patch: &str) -> TokenMatchDebugReport {
+    let expected_deleted =
+        collect_patch_side_text(expected_patch, |(old_text, _)| old_text.as_str());
+    let actual_deleted = collect_patch_side_text(actual_patch, |(old_text, _)| old_text.as_str());
+    let expected_inserted =
+        collect_patch_side_text(expected_patch, |(_, new_text)| new_text.as_str());
+    let actual_inserted = collect_patch_side_text(actual_patch, |(_, new_text)| new_text.as_str());
+
+    let (mut metrics, deleted_detail) =
+        classify_token_texts_detailed(&expected_deleted, &actual_deleted);
+    let (inserted_metrics, inserted_detail) =
+        classify_token_texts_detailed(&expected_inserted, &actual_inserted);
+    metrics.accumulate(&inserted_metrics);
+
+    TokenMatchDebugReport {
+        expected_deleted_text: expected_deleted,
+        actual_deleted_text: actual_deleted,
+        expected_inserted_text: expected_inserted,
+        actual_inserted_text: actual_inserted,
+        deleted: deleted_detail,
+        inserted: inserted_detail,
+        metrics,
+    }
+}
+
+/// Counts the number of inserted and deleted tokens in a unified diff patch.
+///
+/// Tokens are words and whitespace sequences (as defined by `word_diff::tokenize`).
+/// Within each hunk, the old (`-`) and new (`+`) lines are compared at the token level
+/// using an LCS-based diff, so modified lines only count the actually changed tokens
+/// rather than the entire line.
+
+pub fn count_patch_token_changes(patch: &str) -> TokenChangeCounts {
+    let mut counts = TokenChangeCounts::default();
+
+    for (old_text, new_text) in extract_patch_change_blocks(patch) {
+        let metrics = classify_token_texts(&old_text, &new_text);
+        counts.deleted_tokens += metrics.false_negatives;
+        counts.inserted_tokens += metrics.false_positives;
+    }
+
     counts
 }
 
@@ -959,6 +1156,173 @@ index abc123..def456 100644
         assert_eq!(metrics.true_positives, 0);
         assert_eq!(metrics.false_positives, 0);
         assert_eq!(metrics.false_negatives, 0);
+    }
+
+    #[test]
+    fn test_token_match_perfect() {
+        let expected = indoc! {"
+            @@ -1,2 +1,4 @@
+            -str
+            +struct LanguageEntry {
+            +    path: PathBuf,
+            +}
+        "};
+
+        let actual = indoc! {"
+            @@ -1,2 +1,4 @@
+            -str
+            +struct LanguageEntry {
+            +    path: PathBuf,
+            +}
+        "};
+
+        let metrics = token_match(expected, actual);
+        assert_eq!(metrics.false_positives, 0);
+        assert_eq!(metrics.false_negatives, 0);
+        assert!(metrics.true_positives > 0);
+        assert!((metrics.precision() - 1.0).abs() < 1e-6);
+        assert!((metrics.recall() - 1.0).abs() < 1e-6);
+        assert!((metrics.f1() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_token_match_partial_subset_keeps_high_precision() {
+        let expected = indoc! {"
+            @@ -1,2 +1,6 @@
+            -str
+            +struct LanguageEntry {
+            +    path: PathBuf,
+            +    language: OnceCell<Language>,
+            +    external_files: Option<Vec<PathBuf>>,
+            +}
+        "};
+
+        let actual = indoc! {"
+            @@ -1,2 +1,3 @@
+            -str
+            +struct LanguageEntry {
+            +}
+        "};
+
+        let metrics = token_match(expected, actual);
+        assert!(metrics.true_positives > 0);
+        assert_eq!(metrics.false_positives, 0);
+        assert!(metrics.false_negatives > 0);
+        assert!((metrics.precision() - 1.0).abs() < 1e-6);
+        assert!(metrics.recall() < 1.0);
+    }
+
+    #[test]
+    fn test_token_match_counts_wrong_tokens_as_fp_and_fn() {
+        let expected = indoc! {"
+            @@ -1,1 +1,1 @@
+            -old_name
+            +new_name
+        "};
+
+        let actual = indoc! {"
+            @@ -1,1 +1,1 @@
+            -different_old
+            +different_new
+        "};
+
+        let metrics = token_match(expected, actual);
+        assert_eq!(metrics.true_positives, 0);
+        assert!(metrics.false_positives > 0);
+        assert!(metrics.false_negatives > 0);
+    }
+
+    #[test]
+    fn test_token_match_debug_report_metrics_match_token_match() {
+        let expected = indoc! {"
+            @@ -1,2 +1,3 @@
+            -str
+            +struct LanguageEntry {
+            +}
+        "};
+
+        let actual = indoc! {"
+            @@ -1,2 +1,4 @@
+            -str
+            +struct LanguageEntry {
+            +    path: PathBuf,
+            +}
+        "};
+
+        let metrics = token_match(expected, actual);
+        let report = token_match_debug_report(expected, actual);
+
+        assert_eq!(report.metrics, metrics);
+
+        let expected_tp = report
+            .deleted
+            .expected_tokens
+            .iter()
+            .chain(report.inserted.expected_tokens.iter())
+            .filter(|token| token.class == TokenClass::TruePositive)
+            .count();
+        let expected_fn = report
+            .deleted
+            .expected_tokens
+            .iter()
+            .chain(report.inserted.expected_tokens.iter())
+            .filter(|token| token.class == TokenClass::FalseNegative)
+            .count();
+        let actual_tp = report
+            .deleted
+            .actual_tokens
+            .iter()
+            .chain(report.inserted.actual_tokens.iter())
+            .filter(|token| token.class == TokenClass::TruePositive)
+            .count();
+        let actual_fp = report
+            .deleted
+            .actual_tokens
+            .iter()
+            .chain(report.inserted.actual_tokens.iter())
+            .filter(|token| token.class == TokenClass::FalsePositive)
+            .count();
+
+        assert_eq!(expected_tp, report.metrics.true_positives);
+        assert_eq!(actual_tp, report.metrics.true_positives);
+        assert_eq!(expected_fn, report.metrics.false_negatives);
+        assert_eq!(actual_fp, report.metrics.false_positives);
+    }
+
+    #[test]
+    fn test_token_match_debug_report_marks_inserted_extra_tokens_as_fp() {
+        let expected = indoc! {"
+            @@ -1,1 +1,1 @@
+            -a
+            +value
+        "};
+
+        let actual = indoc! {"
+            @@ -1,1 +1,1 @@
+            -a
+            +value_extra
+        "};
+
+        let report = token_match_debug_report(expected, actual);
+
+        assert_eq!(report.metrics.false_positives, 1);
+        assert_eq!(report.metrics.false_negatives, 1);
+
+        assert!(
+            report
+                .inserted
+                .actual_tokens
+                .iter()
+                .any(|token| token.token == "value_extra"
+                    && token.class == TokenClass::FalsePositive)
+        );
+        assert!(
+            report
+                .inserted
+                .expected_tokens
+                .iter()
+                .any(|token| token.token == "value" && token.class == TokenClass::FalseNegative)
+        );
     }
 
     #[test]

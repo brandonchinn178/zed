@@ -71,6 +71,11 @@ pub async fn run_scoring(
         exact_lines_tp: 0,
         exact_lines_fp: 0,
         exact_lines_fn: 0,
+        token_match_tp: 0,
+        token_match_fp: 0,
+        token_match_fn: 0,
+        token_match_precision: 0.0,
+        token_match_recall: 0.0,
         reversal_ratio: 0.0,
         cursor_distance: None,
         cursor_exact_match: None,
@@ -100,10 +105,30 @@ pub async fn run_scoring(
 
         let token_changes = metrics::count_patch_token_changes(&actual_patch);
 
+        let best_exact_lines = expected_patches_with_cursors
+            .iter()
+            .map(|(expected_patch, _)| metrics::exact_lines_match(expected_patch, &actual_patch))
+            .max_by_key(|m| m.true_positives)
+            .unwrap_or_default();
+
+        let best_token_match = expected_patches_with_cursors
+            .iter()
+            .map(|(expected_patch, _)| metrics::token_match(expected_patch, &actual_patch))
+            .max_by(metrics::compare_classification_metrics)
+            .unwrap_or_default();
+
         let actual_text = match apply_diff_to_string(&actual_patch, original_text) {
             Ok(text) => text,
             Err(_) => {
                 let mut s = zero_scores.clone();
+                s.exact_lines_tp = best_exact_lines.true_positives;
+                s.exact_lines_fp = best_exact_lines.false_positives;
+                s.exact_lines_fn = best_exact_lines.false_negatives;
+                s.token_match_tp = best_token_match.true_positives;
+                s.token_match_fp = best_token_match.false_positives;
+                s.token_match_fn = best_token_match.false_negatives;
+                s.token_match_precision = best_token_match.precision();
+                s.token_match_recall = best_token_match.recall();
                 s.inserted_tokens = token_changes.inserted_tokens;
                 s.deleted_tokens = token_changes.deleted_tokens;
                 scores.push(s);
@@ -151,13 +176,6 @@ pub async fn run_scoring(
         let disbalance_after = metrics::braces_disbalance(&actual_text);
         let braces_disbalance = disbalance_after.saturating_sub(disbalance_before);
 
-        // Compute exact lines match against best matching expected patch
-        let best_exact_lines = expected_patches_with_cursors
-            .iter()
-            .map(|(expected_patch, _)| metrics::exact_lines_match(expected_patch, &actual_patch))
-            .max_by_key(|m| m.true_positives)
-            .unwrap_or_default();
-
         // Compute reversal ratio
         let reversal_ratio = reversal_tracking::compute_prediction_reversal_ratio(
             prompt_inputs,
@@ -184,6 +202,11 @@ pub async fn run_scoring(
             exact_lines_tp: best_exact_lines.true_positives,
             exact_lines_fp: best_exact_lines.false_positives,
             exact_lines_fn: best_exact_lines.false_negatives,
+            token_match_tp: best_token_match.true_positives,
+            token_match_fp: best_token_match.false_positives,
+            token_match_fn: best_token_match.false_negatives,
+            token_match_precision: best_token_match.precision(),
+            token_match_recall: best_token_match.recall(),
             reversal_ratio,
             cursor_distance,
             cursor_exact_match,
@@ -253,6 +276,7 @@ pub fn print_report(examples: &[Example], verbose: bool) {
     let mut isolated_whitespace_count: usize = 0;
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
+    let mut total_token_match = ClassificationMetrics::default();
     let mut predictions_with_patch: usize = 0;
 
     let mut printed_lines: usize = 0;
@@ -317,6 +341,9 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             total_exact_lines.true_positives += score.exact_lines_tp;
             total_exact_lines.false_positives += score.exact_lines_fp;
             total_exact_lines.false_negatives += score.exact_lines_fn;
+            total_token_match.true_positives += score.token_match_tp;
+            total_token_match.false_positives += score.token_match_fp;
+            total_token_match.false_negatives += score.token_match_fn;
 
             // Accumulate QA metrics
             if let Some(qa) = qa_result {
@@ -465,6 +492,16 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             println!("Isolated whitespace changes: {}", isolated_ws_str);
         }
 
+        println!(
+            "Token match: P={:.1}% R={:.1}% F1={:.1}% (TP={}, FP={}, FN={})",
+            total_token_match.precision() * 100.0,
+            total_token_match.recall() * 100.0,
+            total_token_match.f1() * 100.0,
+            total_token_match.true_positives,
+            total_token_match.false_positives,
+            total_token_match.false_negatives,
+        );
+
         // Print token change percentile summary (only for predictions with a patch)
         if !patch_inserted_tokens.is_empty() {
             patch_inserted_tokens.sort_unstable();
@@ -547,6 +584,12 @@ pub struct SummaryJson {
     pub exact_lines_precision: f64,
     pub exact_lines_recall: f64,
     pub exact_lines_f1: f64,
+    pub token_match_tp: usize,
+    pub token_match_fp: usize,
+    pub token_match_fn: usize,
+    pub token_match_precision: f64,
+    pub token_match_recall: f64,
+    pub token_match_f1: f64,
     pub avg_reversal_ratio: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub qa_avg_reverts_edits: Option<f32>,
@@ -570,6 +613,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut all_reversal_ratios = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
     let mut total_exact_lines = ClassificationMetrics::default();
+    let mut total_token_match = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
     let mut qa_reverts_count: usize = 0;
     let mut qa_reverts_total: usize = 0;
@@ -592,6 +636,9 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
             total_exact_lines.true_positives += score.exact_lines_tp;
             total_exact_lines.false_positives += score.exact_lines_fp;
             total_exact_lines.false_negatives += score.exact_lines_fn;
+            total_token_match.true_positives += score.token_match_tp;
+            total_token_match.false_positives += score.token_match_fp;
+            total_token_match.false_negatives += score.token_match_fn;
 
             // Accumulate QA metrics
             if let Some(Some(qa)) = example.qa.get(score_idx) {
@@ -704,6 +751,12 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         exact_lines_precision: total_exact_lines.precision(),
         exact_lines_recall: total_exact_lines.recall(),
         exact_lines_f1: total_exact_lines.f1(),
+        token_match_tp: total_token_match.true_positives,
+        token_match_fp: total_token_match.false_positives,
+        token_match_fn: total_token_match.false_negatives,
+        token_match_precision: total_token_match.precision(),
+        token_match_recall: total_token_match.recall(),
+        token_match_f1: total_token_match.f1(),
         avg_reversal_ratio,
         qa_avg_reverts_edits,
         qa_avg_confidence,

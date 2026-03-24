@@ -22,6 +22,7 @@ mod reversal_tracking;
 mod score;
 mod split_commit;
 mod split_dataset;
+mod token_match_debug;
 
 mod synthesize;
 mod truncate_expected_patch;
@@ -61,6 +62,7 @@ use crate::score::run_scoring;
 use crate::split_commit::SplitCommitArgs;
 use crate::split_dataset::SplitArgs;
 use crate::synthesize::{SynthesizeConfig, run_synthesize};
+use crate::token_match_debug::{TokenMatchDebugArgs, run_token_match_debug};
 use crate::truncate_expected_patch::TruncatePatchArgs;
 
 #[derive(Parser, Debug)]
@@ -214,6 +216,8 @@ enum Command {
     SplitCommit(SplitCommitArgs),
     /// Truncate expected patch by the given criteria
     TruncatePatch(TruncatePatchArgs),
+    /// Generate token-match debug HTML for expected vs predicted patches
+    TokenMatchDebug(TokenMatchDebugArgs),
     /// Split a JSONL dataset into multiple files (stratified by repository_url if present)
     Split(SplitArgs),
     /// Filter a JSONL dataset by programming language (based on cursor_path extension)
@@ -257,6 +261,7 @@ impl Display for Command {
             Command::Clean => write!(f, "clean"),
             Command::SplitCommit(_) => write!(f, "split-commit"),
             Command::TruncatePatch(_) => write!(f, "truncate-patch"),
+            Command::TokenMatchDebug(_) => write!(f, "token-match-debug"),
             Command::Split(_) => write!(f, "split"),
             Command::FilterLanguages(_) => write!(f, "filter-languages"),
             Command::ImportBatch(args) => {
@@ -1056,6 +1061,13 @@ fn main() {
             }
             return;
         }
+        Command::TokenMatchDebug(debug_args) => {
+            if let Err(error) = run_token_match_debug(debug_args, &args.inputs) {
+                eprintln!("{error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         Command::Split(split_args) => {
             if let Err(error) = split_dataset::run_split(split_args, &args.inputs) {
                 eprintln!("{error:#}");
@@ -1249,6 +1261,7 @@ fn main() {
                                         | Command::SplitCommit(_)
                                         | Command::Split(_)
                                         | Command::TruncatePatch(_)
+                                        | Command::TokenMatchDebug(_)
                                         | Command::FilterLanguages(_)
                                         | Command::ImportBatch(_)
                                         | Command::PrintZetaFormats => {

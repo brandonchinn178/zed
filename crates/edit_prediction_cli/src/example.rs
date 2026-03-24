@@ -158,6 +158,16 @@ pub struct ExampleScore {
     #[serde(default)]
     pub exact_lines_fn: usize,
     #[serde(default)]
+    pub token_match_tp: usize,
+    #[serde(default)]
+    pub token_match_fp: usize,
+    #[serde(default)]
+    pub token_match_fn: usize,
+    #[serde(default)]
+    pub token_match_precision: f64,
+    #[serde(default)]
+    pub token_match_recall: f64,
+    #[serde(default)]
     pub reversal_ratio: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor_distance: Option<usize>,

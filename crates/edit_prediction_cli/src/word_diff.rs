@@ -85,8 +85,10 @@ fn compute_word_diff(old_text: &str, new_text: &str) -> String {
 
     for op in ops {
         match op {
-            DiffOp::Equal(start, end) => {
-                for token in &old_words[start..end] {
+            DiffOp::Equal {
+                old_start, old_end, ..
+            } => {
+                for token in &old_words[old_start..old_end] {
                     result.push_str(token);
                 }
             }
@@ -178,7 +180,12 @@ pub(crate) fn tokenize(text: &str) -> Vec<&str> {
 
 #[derive(Debug)]
 pub(crate) enum DiffOp {
-    Equal(usize, usize),
+    Equal {
+        old_start: usize,
+        old_end: usize,
+        new_start: usize,
+        new_end: usize,
+    },
     Delete(usize, usize),
     Insert(usize, usize),
     Replace {
@@ -199,7 +206,12 @@ pub(crate) fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
             let old_range = op.old_range();
             let new_range = op.new_range();
             match tag {
-                DiffTag::Equal => DiffOp::Equal(old_range.start, old_range.end),
+                DiffTag::Equal => DiffOp::Equal {
+                    old_start: old_range.start,
+                    old_end: old_range.end,
+                    new_start: new_range.start,
+                    new_end: new_range.end,
+                },
                 DiffTag::Delete => DiffOp::Delete(old_range.start, old_range.end),
                 DiffTag::Insert => DiffOp::Insert(new_range.start, new_range.end),
                 DiffTag::Replace => DiffOp::Replace {
