@@ -21,7 +21,7 @@ use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
-use project::Project;
+use project::{CURRENT_QUIRKS, Project};
 use settings::Settings as _;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
@@ -1195,9 +1195,7 @@ impl Room {
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
             windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
-            // TODO we can stop sending this once the minimum collab version is greater than (FIXME fill in version)
-            // FIXME collab bits
-            quirks: vec!["new-style-anchors".to_owned()],
+            quirks: CURRENT_QUIRKS.iter().map(|s| s.to_string()).collect(),
         });
 
         cx.spawn(async move |this, cx| {

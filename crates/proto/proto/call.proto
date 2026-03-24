@@ -194,6 +194,7 @@ message JoinProject {
     uint64 project_id = 1;
     optional string committer_email = 2;
     optional string committer_name = 3;
+    repeated string quirks = 4;
 }
 
 message JoinProjectResponse {
@@ -205,6 +206,7 @@ message JoinProjectResponse {
     repeated string language_server_capabilities = 8;
     ChannelRole role = 6;
     bool windows_paths = 9;
+    repeated string quirks = 10;
     reserved 7;
 }
 

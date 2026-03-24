@@ -1029,6 +1029,8 @@ impl DirectoryLister {
     }
 }
 
+pub const CURRENT_QUIRKS: &[&str] = &["new-style-anchors"];
+
 #[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
@@ -1637,6 +1639,7 @@ impl Project {
                 project_id: remote_id,
                 committer_email: committer.email,
                 committer_name: committer.name,
+                quirks: CURRENT_QUIRKS.iter().map(|s| s.to_string()).collect(),
             })
             .await?;
         Self::from_join_project_response(

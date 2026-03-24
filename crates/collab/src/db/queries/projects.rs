@@ -34,6 +34,7 @@ impl Database {
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
         windows_paths: bool,
+        quirks: &[String],
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -71,6 +72,7 @@ impl Database {
                 ))),
                 id: ActiveValue::NotSet,
                 windows_paths: ActiveValue::set(windows_paths),
+                quirks: ActiveValue::set(serde_json::to_string(quirks).unwrap()),
             }
             .insert(&*tx)
             .await?;
@@ -1071,6 +1073,7 @@ impl Database {
         } else {
             PathStyle::Posix
         };
+        let quirks: Vec<String> = serde_json::from_str(&project.quirks).unwrap_or_default();
 
         let project = Project {
             id: project.id,
@@ -1100,6 +1103,7 @@ impl Database {
                 })
                 .collect(),
             path_style,
+            quirks,
         };
         Ok((project, replica_id as ReplicaId))
     }
