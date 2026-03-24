@@ -505,7 +505,7 @@ impl WorktreeListDelegate {
 
     fn refresh_forbidden_deletion_path(&mut self, cx: &App) {
         let Some(workspace) = self.workspace.upgrade() else {
-            debug_panic!("Workspae should always be available or else the picker would be closed");
+            debug_panic!("Workspace should always be available or else the picker would be closed");
             self.forbidden_deletion_path = None;
             return;
         };
