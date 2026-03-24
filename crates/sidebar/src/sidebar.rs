@@ -518,57 +518,6 @@ impl Sidebar {
         result
     }
 
-    fn all_thread_infos_for_workspace(
-        workspace: &Entity<Workspace>,
-        cx: &App,
-    ) -> Vec<ActiveThreadInfo> {
-        let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
-            return Vec::new();
-        };
-        let agent_panel_ref = agent_panel.read(cx);
-
-        agent_panel_ref
-            .parent_threads(cx)
-            .into_iter()
-            .map(|thread_view| {
-                let thread_view_ref = thread_view.read(cx);
-                let thread = thread_view_ref.thread.read(cx);
-
-                let icon = thread_view_ref.agent_icon;
-                let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
-                let title = thread.title();
-                let is_native = thread_view_ref.as_native_thread(cx).is_some();
-                let is_title_generating = is_native && thread.has_provisional_title();
-                let session_id = thread.session_id().clone();
-                let is_background = agent_panel_ref.is_background_thread(&session_id);
-
-                let status = if thread.is_waiting_for_confirmation() {
-                    AgentThreadStatus::WaitingForConfirmation
-                } else if thread.had_error() {
-                    AgentThreadStatus::Error
-                } else {
-                    match thread.status() {
-                        ThreadStatus::Generating => AgentThreadStatus::Running,
-                        ThreadStatus::Idle => AgentThreadStatus::Completed,
-                    }
-                };
-
-                let diff_stats = thread.action_log().read(cx).diff_stats(cx);
-
-                ActiveThreadInfo {
-                    session_id,
-                    title,
-                    status,
-                    icon,
-                    icon_from_external_svg,
-                    is_background,
-                    is_title_generating,
-                    diff_stats,
-                }
-            })
-            .collect()
-    }
-
     /// When modifying this thread, aim for a single forward pass over workspaces
     /// and threads plus an O(T log T) sort. Avoid adding extra scans over the data.
     fn rebuild_contents(&mut self, cx: &App) {
@@ -687,7 +636,7 @@ impl Sidebar {
             let is_collapsed = self.collapsed_groups.contains(&path_list);
             let should_load_threads = !is_collapsed || !query.is_empty();
 
-            let mut live_infos = Self::all_thread_infos_for_workspace(workspace, cx);
+            let mut live_infos: Vec<_> = all_thread_infos_for_workspace(workspace, cx).collect();
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
             let mut has_running_threads = false;
@@ -765,17 +714,16 @@ impl Sidebar {
                     for (worktree_path_list, worktree_name, worktree_path) in
                         &linked_worktree_queries
                     {
-                        let target_workspace =
-                            match absorbed_workspace_by_path.get(worktree_path.as_ref()) {
-                                Some(&idx) => {
-                                    live_infos.extend(Self::all_thread_infos_for_workspace(
-                                        &workspaces[idx],
-                                        cx,
-                                    ));
-                                    ThreadEntryWorkspace::Open(workspaces[idx].clone())
-                                }
-                                None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
-                            };
+                        let target_workspace = match absorbed_workspace_by_path
+                            .get(worktree_path.as_ref())
+                        {
+                            Some(&idx) => {
+                                live_infos
+                                    .extend(all_thread_infos_for_workspace(&workspaces[idx], cx));
+                                ThreadEntryWorkspace::Open(workspaces[idx].clone())
+                            }
+                            None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
+                        };
 
                         let worktree_rows: Vec<_> = thread_store
                             .read(cx)
@@ -2803,6 +2751,74 @@ impl Render for Sidebar {
                     .child(self.render_sidebar_toggle_button(cx)),
             )
     }
+}
+
+fn all_thread_infos_for_workspace(
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> impl Iterator<Item = ActiveThreadInfo> {
+    enum ThreadInfoIterator<T: Iterator<Item = ActiveThreadInfo>> {
+        Empty,
+        Threads(T),
+    }
+
+    impl<T: Iterator<Item = ActiveThreadInfo>> Iterator for ThreadInfoIterator<T> {
+        type Item = ActiveThreadInfo;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                ThreadInfoIterator::Empty => None,
+                ThreadInfoIterator::Threads(threads) => threads.next(),
+            }
+        }
+    }
+
+    let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+        return ThreadInfoIterator::Empty;
+    };
+    let agent_panel = agent_panel.read(cx);
+
+    let threads = agent_panel
+        .parent_threads(cx)
+        .into_iter()
+        .map(|thread_view| {
+            let thread_view_ref = thread_view.read(cx);
+            let thread = thread_view_ref.thread.read(cx);
+
+            let icon = thread_view_ref.agent_icon;
+            let icon_from_external_svg = thread_view_ref.agent_icon_from_external_svg.clone();
+            let title = thread.title();
+            let is_native = thread_view_ref.as_native_thread(cx).is_some();
+            let is_title_generating = is_native && thread.has_provisional_title();
+            let session_id = thread.session_id().clone();
+            let is_background = agent_panel.is_background_thread(&session_id);
+
+            let status = if thread.is_waiting_for_confirmation() {
+                AgentThreadStatus::WaitingForConfirmation
+            } else if thread.had_error() {
+                AgentThreadStatus::Error
+            } else {
+                match thread.status() {
+                    ThreadStatus::Generating => AgentThreadStatus::Running,
+                    ThreadStatus::Idle => AgentThreadStatus::Completed,
+                }
+            };
+
+            let diff_stats = thread.action_log().read(cx).diff_stats(cx);
+
+            ActiveThreadInfo {
+                session_id,
+                title,
+                status,
+                icon,
+                icon_from_external_svg,
+                is_background,
+                is_title_generating,
+                diff_stats,
+            }
+        });
+
+    ThreadInfoIterator::Threads(threads)
 }
 
 #[cfg(test)]
