@@ -479,8 +479,7 @@ impl DisplayMap {
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
 
-            let (snapshot, edits) =
-                writer.unfold_intersecting([Anchor::min()..Anchor::max()], true);
+            let (snapshot, edits) = writer.unfold_intersecting([Anchor::Min..Anchor::Max], true);
             let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
             let (snapshot, _edits) = self
                 .wrap_map

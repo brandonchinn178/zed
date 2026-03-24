@@ -413,7 +413,7 @@ async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_diff(diff, cx);
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -453,7 +453,7 @@ async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -494,7 +494,7 @@ async fn test_diff_hunks_in_range_query_starting_at_added_row(cx: &mut TestAppCo
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_diff(diff, cx);
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -1177,14 +1177,14 @@ fn test_multibuffer_anchors(cx: &mut App) {
             .to_offset(&old_snapshot),
         MultiBufferOffset(0)
     );
-    assert_eq!(Anchor::min().to_offset(&old_snapshot), MultiBufferOffset(0));
-    assert_eq!(Anchor::min().to_offset(&old_snapshot), MultiBufferOffset(0));
+    assert_eq!(Anchor::Min.to_offset(&old_snapshot), MultiBufferOffset(0));
+    assert_eq!(Anchor::Min.to_offset(&old_snapshot), MultiBufferOffset(0));
     assert_eq!(
-        Anchor::max().to_offset(&old_snapshot),
+        Anchor::Max.to_offset(&old_snapshot),
         MultiBufferOffset(10)
     );
     assert_eq!(
-        Anchor::max().to_offset(&old_snapshot),
+        Anchor::Max.to_offset(&old_snapshot),
         MultiBufferOffset(10)
     );
 
@@ -1313,7 +1313,7 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -1359,7 +1359,7 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_line_indents(&snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+        multibuffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
     });
     assert_new_snapshot(
         &multibuffer,
@@ -1546,7 +1546,7 @@ async fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -1597,7 +1597,7 @@ async fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
 
     // Now collapse all diff hunks
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -2253,7 +2253,7 @@ async fn test_map_excerpt_ranges_with_deleted_hunks(cx: &mut TestAppContext) {
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
     cx.run_until_parked();
 
@@ -2398,7 +2398,7 @@ async fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     assert_new_snapshot(
@@ -4033,7 +4033,7 @@ async fn test_trailing_deletion_without_newline(cx: &mut TestAppContext) {
             cx,
         );
         multibuffer.add_diff(diff_1.clone(), cx);
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
         multibuffer
     });
 
@@ -5071,7 +5071,7 @@ fn collect_word_diffs(
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
     });
 
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));

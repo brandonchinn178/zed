@@ -188,7 +188,7 @@ impl AgentDiffPane {
                 if was_empty {
                     let first_hunk = editor
                         .diff_hunks_in_ranges(
-                            &[editor::Anchor::min()..editor::Anchor::max()],
+                            &[editor::Anchor::Min..editor::Anchor::Max],
                             &self.multibuffer.read(cx).read(cx),
                         )
                         .next();
@@ -252,7 +252,7 @@ impl AgentDiffPane {
             self.editor.update(cx, |editor, cx| {
                 let first_hunk = editor
                     .diff_hunks_in_ranges(
-                        &[position..editor::Anchor::max()],
+                        &[position..editor::Anchor::Max],
                         &self.multibuffer.read(cx).read(cx),
                     )
                     .next();
@@ -295,7 +295,7 @@ impl AgentDiffPane {
                 editor,
                 &snapshot,
                 &self.thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
+                vec![editor::Anchor::Min..editor::Anchor::Max],
                 self.workspace.clone(),
                 window,
                 cx,
@@ -467,7 +467,7 @@ fn update_editor_selection(
                 let last_kept_hunk_end = last_kept_hunk.multi_buffer_range.end;
                 editor
                     .diff_hunks_in_ranges(
-                        &[last_kept_hunk_end..editor::Anchor::max()],
+                        &[last_kept_hunk_end..editor::Anchor::Max],
                         buffer_snapshot,
                     )
                     .nth(1)
@@ -477,7 +477,7 @@ fn update_editor_selection(
                 let first_kept_hunk_start = first_kept_hunk.multi_buffer_range.start;
                 editor
                     .diff_hunks_in_ranges(
-                        &[editor::Anchor::min()..first_kept_hunk_start],
+                        &[editor::Anchor::Min..first_kept_hunk_start],
                         buffer_snapshot,
                     )
                     .next()
@@ -1653,7 +1653,7 @@ impl AgentDiff {
                 editor,
                 &snapshot,
                 thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
+                vec![editor::Anchor::Min..editor::Anchor::Max],
                 window,
                 cx,
             );
@@ -1674,7 +1674,7 @@ impl AgentDiff {
                 editor,
                 &snapshot,
                 thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
+                vec![editor::Anchor::Min..editor::Anchor::Max],
                 workspace.clone(),
                 window,
                 cx,

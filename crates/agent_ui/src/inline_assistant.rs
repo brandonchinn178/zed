@@ -1530,7 +1530,7 @@ impl InlineAssistant {
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
-                        Anchor::min()..Anchor::max(),
+                        Anchor::Min..Anchor::Max,
                         cx.theme().status().deleted_background,
                         Default::default(),
                         cx,

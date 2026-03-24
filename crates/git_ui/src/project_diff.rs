@@ -771,7 +771,7 @@ impl ProjectDiff {
                         cx,
                         |selections| {
                             selections.select_ranges([
-                                multi_buffer::Anchor::min()..multi_buffer::Anchor::min()
+                                multi_buffer::Anchor::Min..multi_buffer::Anchor::Min
                             ])
                         },
                     );
@@ -2230,7 +2230,7 @@ mod tests {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot();
                 let prev_buffer_hunks = buffer_editor
-                    .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], snapshot)
                     .collect::<Vec<_>>();
                 buffer_editor.git_restore(&Default::default(), window, cx);
                 prev_buffer_hunks
@@ -2243,7 +2243,7 @@ mod tests {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot();
                 buffer_editor
-                    .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], snapshot)
                     .collect::<Vec<_>>()
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);

@@ -896,7 +896,7 @@ impl MessageEditor {
             self.editor.update(cx, |message_editor, cx| {
                 message_editor.edit(
                     [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        multi_buffer::Anchor::Max..multi_buffer::Anchor::Max,
                         new_text,
                     )],
                     cx,

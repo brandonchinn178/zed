@@ -15259,7 +15259,7 @@ impl Editor {
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
-            s.select_ranges(vec![Anchor::min()..Anchor::min()]);
+            s.select_ranges(vec![Anchor::Min..Anchor::Min]);
         });
     }
 
@@ -15375,7 +15375,7 @@ impl Editor {
     pub fn select_all(&mut self, _: &SelectAll, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges(vec![Anchor::min()..Anchor::max()]);
+            s.select_ranges(vec![Anchor::Min..Anchor::Max]);
         });
     }
 
@@ -17112,7 +17112,7 @@ impl Editor {
                 cx.background_spawn({
                     let snapshot = display_snapshot.clone();
                     async move {
-                        Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                        Self::fetch_runnable_ranges(&snapshot, Anchor::Min..Anchor::Max)
                     }
                 })
                     .await;
@@ -20548,7 +20548,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.buffer.update(cx, |buffer, cx| {
-            buffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+            buffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
         });
     }
 
@@ -20559,7 +20559,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.buffer.update(cx, |buffer, cx| {
-            buffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
+            buffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
         });
     }
 
@@ -20821,7 +20821,7 @@ impl Editor {
 
     pub fn clear_expanded_diff_hunks(&mut self, cx: &mut Context<Self>) -> bool {
         self.buffer.update(cx, |buffer, cx| {
-            let ranges = vec![Anchor::min()..Anchor::max()];
+            let ranges = vec![Anchor::Min..Anchor::Max];
             if !buffer.all_diff_hunks_expanded()
                 && buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx)
             {
@@ -20837,7 +20837,7 @@ impl Editor {
         if self.buffer.read(cx).all_diff_hunks_expanded() {
             return true;
         }
-        let ranges = vec![Anchor::min()..Anchor::max()];
+        let ranges = vec![Anchor::Min..Anchor::Max];
         self.buffer
             .read(cx)
             .has_expanded_diff_hunks_in_ranges(&ranges, cx)

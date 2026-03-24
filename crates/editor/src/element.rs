@@ -1746,7 +1746,7 @@ impl EditorElement {
         // Remote cursors
         if let Some(collaboration_hub) = &editor.collaboration_hub {
             for remote_selection in snapshot.remote_selections_in_range(
-                &(Anchor::min()..Anchor::max()),
+                &(Anchor::Min..Anchor::Max),
                 collaboration_hub.deref(),
                 cx,
             ) {
@@ -9849,14 +9849,14 @@ impl Element for EditorElement {
                     };
 
                     let start_anchor = if start_row == Default::default() {
-                        Anchor::min()
+                        Anchor::Min
                     } else {
                         snapshot.buffer_snapshot().anchor_before(
                             DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left),
                         )
                     };
                     let end_anchor = if end_row > max_row {
-                        Anchor::max()
+                        Anchor::Max
                     } else {
                         snapshot.buffer_snapshot().anchor_before(
                             DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right),
@@ -9882,7 +9882,7 @@ impl Element for EditorElement {
                                 editor.update(cx, |editor, cx| {
                                     let snapshot = editor.snapshot(window, cx);
                                     let start_anchor = if start_row == Default::default() {
-                                        Anchor::min()
+                                        Anchor::Min
                                     } else {
                                         snapshot.buffer_snapshot().anchor_before(
                                             DisplayPoint::new(start_row, 0)
@@ -9890,7 +9890,7 @@ impl Element for EditorElement {
                                         )
                                     };
                                     let end_anchor = if end_row > max_row {
-                                        Anchor::max()
+                                        Anchor::Max
                                     } else {
                                         snapshot.buffer_snapshot().anchor_before(
                                             DisplayPoint::new(end_row, 0)
@@ -12936,7 +12936,7 @@ mod tests {
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,
-                        placement: BlockPlacement::Above(Anchor::min()),
+                        placement: BlockPlacement::Above(Anchor::Min),
                         height: Some(3),
                         render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
                         priority: 0,

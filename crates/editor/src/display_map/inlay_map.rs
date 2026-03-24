@@ -1348,7 +1348,7 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
@@ -1368,7 +1368,7 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
@@ -1388,7 +1388,7 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
@@ -1408,7 +1408,7 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
@@ -1431,7 +1431,7 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
                     position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),

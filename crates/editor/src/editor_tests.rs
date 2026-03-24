@@ -22888,7 +22888,7 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut TestAppContext) {
         editor
             .snapshot(window, cx)
             .buffer_snapshot()
-            .indent_guides_in_range(Anchor::min()..Anchor::max(), false, cx)
+            .indent_guides_in_range(Anchor::Min..Anchor::Max, false, cx)
             .map(|guide| (guide.start_row..=guide.end_row, guide.depth))
             .collect::<Vec<_>>()
     });
@@ -22943,7 +22943,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
     let hunk_ranges = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
+            .diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
         hunks
@@ -23040,7 +23040,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
     let hunk_ranges = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
+            .diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let multibuffer_snapshot = snapshot.buffer_snapshot();
         hunks
@@ -23112,7 +23112,7 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
     let hunk_ranges = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
+            .diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
         hunks
@@ -23226,7 +23226,7 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
         let snapshot = editor.snapshot(window, cx);
         let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
+            .diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         assert_eq!(hunks.len(), 1);
         let hunk_range = multibuffer_snapshot
@@ -23377,7 +23377,7 @@ async fn test_partially_staged_hunk(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
+            .diff_hunks_in_ranges(&[Anchor::Min..Anchor::Max], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         assert_eq!(hunks.len(), 1);
         assert_eq!(
@@ -31260,7 +31260,7 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
 }
 
 /// Helper function to create a DiffHunkKey for testing.
-/// Uses Anchor::min() as a placeholder anchor since these tests don't need
+/// Uses Anchor::Min as a placeholder anchor since these tests don't need
 /// real buffer positioning.
 fn test_hunk_key(file_path: &str) -> DiffHunkKey {
     DiffHunkKey {
@@ -31269,7 +31269,7 @@ fn test_hunk_key(file_path: &str) -> DiffHunkKey {
         } else {
             Arc::from(util::rel_path::RelPath::unix(file_path).unwrap())
         },
-        hunk_start_anchor: Anchor::min(),
+        hunk_start_anchor: Anchor::Min,
     }
 }
 
@@ -31292,7 +31292,7 @@ fn add_test_comment(
     comment: &str,
     cx: &mut Context<Editor>,
 ) -> usize {
-    editor.add_review_comment(key, comment.to_string(), Anchor::min()..Anchor::max(), cx)
+    editor.add_review_comment(key, comment.to_string(), Anchor::Min..Anchor::Max, cx)
 }
 
 #[gpui::test]

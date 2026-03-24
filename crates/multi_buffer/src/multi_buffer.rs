@@ -2237,7 +2237,7 @@ impl MultiBuffer {
 
     pub fn set_all_diff_hunks_expanded(&mut self, cx: &mut Context<Self>) {
         self.snapshot.get_mut().all_diff_hunks_expanded = true;
-        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
+        self.expand_or_collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], true, cx);
     }
 
     pub fn all_diff_hunks_expanded(&self) -> bool {
@@ -2246,7 +2246,7 @@ impl MultiBuffer {
 
     pub fn set_all_diff_hunks_collapsed(&mut self, cx: &mut Context<Self>) {
         self.snapshot.get_mut().all_diff_hunks_expanded = false;
-        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], false, cx);
+        self.expand_or_collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], false, cx);
     }
 
     pub fn set_show_deleted_hunks(&mut self, show: bool, cx: &mut Context<Self>) {
@@ -2278,7 +2278,7 @@ impl MultiBuffer {
 
     pub fn has_multiple_hunks(&self, cx: &App) -> bool {
         self.read(cx)
-            .diff_hunks_in_range(Anchor::min()..Anchor::max())
+            .diff_hunks_in_range(Anchor::Min..Anchor::Max)
             .nth(1)
             .is_some()
     }
@@ -3363,7 +3363,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn diff_hunks(&self) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
-        self.diff_hunks_in_range(Anchor::min()..Anchor::max())
+        self.diff_hunks_in_range(Anchor::Min..Anchor::Max)
     }
 
     pub fn diff_hunks_in_range<T: ToPoint>(
@@ -5168,9 +5168,9 @@ impl MultiBufferSnapshot {
             anchor.into()
         } else if excerpt_offset == ExcerptDimension(MultiBufferOffset::ZERO) && bias == Bias::Left
         {
-            Anchor::min()
+            Anchor::Min
         } else {
-            Anchor::max()
+            Anchor::Max
         }
     }
 

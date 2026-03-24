@@ -212,7 +212,7 @@ impl CommitView {
 
             editor.insert_blocks(
                 [BlockProperties {
-                    placement: BlockPlacement::Above(editor::Anchor::min()),
+                    placement: BlockPlacement::Above(editor::Anchor::Min),
                     height: Some(1),
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| gpui::Empty.into_any_element()),

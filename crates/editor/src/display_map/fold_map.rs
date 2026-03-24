@@ -511,7 +511,7 @@ impl FoldMap {
                     .snapshot
                     .folds
                     .cursor::<FoldRange>(&inlay_snapshot.buffer);
-                folds_cursor.seek(&FoldRange(anchor..Anchor::max()), Bias::Left);
+                folds_cursor.seek(&FoldRange(anchor..Anchor::Max), Bias::Left);
 
                 let mut folds = iter::from_fn({
                     let inlay_snapshot = &inlay_snapshot;
@@ -1227,7 +1227,7 @@ impl DerefMut for FoldRange {
 
 impl Default for FoldRange {
     fn default() -> Self {
-        Self(Anchor::min()..Anchor::max())
+        Self(Anchor::Min..Anchor::Max)
     }
 }
 
@@ -1263,10 +1263,10 @@ pub struct FoldSummary {
 impl Default for FoldSummary {
     fn default() -> Self {
         Self {
-            start: Anchor::min(),
-            end: Anchor::max(),
-            min_start: Anchor::max(),
-            max_end: Anchor::min(),
+            start: Anchor::Min,
+            end: Anchor::Max,
+            min_start: Anchor::Max,
+            max_end: Anchor::Min,
             count: 0,
         }
     }

@@ -287,14 +287,6 @@ impl ToPoint for ExcerptAnchor {
 }
 
 impl Anchor {
-    pub fn min() -> Self {
-        Self::Min
-    }
-
-    pub fn max() -> Self {
-        Self::Max
-    }
-
     pub fn is_min(&self) -> bool {
         matches!(self, Self::Min)
     }
