@@ -110,6 +110,24 @@ struct ThreadEntry {
     diff_stats: DiffStats,
 }
 
+impl ThreadEntry {
+    /// Updates this thread entry with active thread information.
+    ///
+    /// The existing [`ThreadEntry`] was likely deserialized from the database
+    /// but if we have a correspond thread already loaded we want to apply the
+    /// live information.
+    fn apply_active_info(&mut self, info: &ActiveThreadInfo) {
+        self.session_info.title = Some(info.title.clone());
+        self.status = info.status;
+        self.icon = info.icon;
+        self.icon_from_external_svg = info.icon_from_external_svg.clone();
+        self.is_live = true;
+        self.is_background = info.is_background;
+        self.is_title_generating = info.is_title_generating;
+        self.diff_stats = info.diff_stats;
+    }
+}
+
 #[derive(Clone)]
 enum ListEntry {
     ProjectHeader {
@@ -792,18 +810,11 @@ impl Sidebar {
                 // Merge live info into threads and update notification state
                 // in a single pass.
                 for thread in &mut threads {
-                    let session_id = &thread.session_info.session_id;
-
-                    if let Some(info) = live_info_by_session.get(session_id) {
-                        thread.session_info.title = Some(info.title.clone());
-                        thread.status = info.status;
-                        thread.icon = info.icon;
-                        thread.icon_from_external_svg = info.icon_from_external_svg.clone();
-                        thread.is_live = true;
-                        thread.is_background = info.is_background;
-                        thread.is_title_generating = info.is_title_generating;
-                        thread.diff_stats = info.diff_stats;
+                    if let Some(info) = live_info_by_session.get(&thread.session_info.session_id) {
+                        thread.apply_active_info(*info);
                     }
+
+                    let session_id = &thread.session_info.session_id;
 
                     let is_thread_workspace_active = match &thread.workspace {
                         ThreadEntryWorkspace::Open(thread_workspace) => active_workspace
