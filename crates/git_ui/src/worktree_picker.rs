@@ -798,8 +798,8 @@ impl PickerDelegate for WorktreeListDelegate {
 
         let focus_handle = self.focus_handle.clone();
 
-        let delete_disabled =
-            !entry.is_new && self.forbidden_deletion_path.as_ref() == Some(&entry.worktree.path);
+        let can_delete =
+            !entry.is_new && self.forbidden_deletion_path.as_ref() != Some(&entry.worktree.path);
 
         let delete_button = |entry_ix: usize| {
             IconButton::new(("delete-worktree", entry_ix), IconName::Trash)
@@ -807,7 +807,6 @@ impl PickerDelegate for WorktreeListDelegate {
                 .tooltip(move |_, cx| {
                     Tooltip::for_action_in("Delete Worktree", &DeleteWorktree, &focus_handle, cx)
                 })
-                .disabled(delete_disabled)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.delegate.delete_at(entry_ix, window, cx);
                 }))
@@ -870,7 +869,7 @@ impl PickerDelegate for WorktreeListDelegate {
                             }
                         })),
                 )
-                .when(!entry.is_new, |this| {
+                .when(can_delete, |this| {
                     if selected {
                         this.end_slot(delete_button(ix))
                     } else {
@@ -888,8 +887,8 @@ impl PickerDelegate for WorktreeListDelegate {
         let focus_handle = self.focus_handle.clone();
         let selected_entry = self.matches.get(self.selected_index);
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
-        let delete_disabled = selected_entry.is_some_and(|entry| {
-            !entry.is_new && self.forbidden_deletion_path.as_ref() == Some(&entry.worktree.path)
+        let can_delete = selected_entry.is_some_and(|entry| {
+            !entry.is_new && self.forbidden_deletion_path.as_ref() != Some(&entry.worktree.path)
         });
 
         let footer_container = h_flex()
@@ -938,17 +937,18 @@ impl PickerDelegate for WorktreeListDelegate {
         } else {
             Some(
                 footer_container
-                    .child(
-                        Button::new("delete-worktree", "Delete")
-                            .key_binding(
-                                KeyBinding::for_action_in(&DeleteWorktree, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
-                            })
-                            .disabled(delete_disabled),
-                    )
+                    .when(can_delete, |this| {
+                        this.child(
+                            Button::new("delete-worktree", "Delete")
+                                .key_binding(
+                                    KeyBinding::for_action_in(&DeleteWorktree, &focus_handle, cx)
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(DeleteWorktree.boxed_clone(), cx)
+                                }),
+                        )
+                    })
                     .child(
                         Button::new("open-in-new-window", "Open in New Window")
                             .key_binding(

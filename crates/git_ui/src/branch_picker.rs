@@ -1155,25 +1155,29 @@ impl PickerDelegate for BranchListDelegate {
 
                 let delete_and_select_btns = h_flex()
                     .gap_1()
-                    .child(
-                        Button::new("delete-branch", "Delete")
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &branch_picker::DeleteBranch,
-                                    &focus_handle,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                    .when(
+                        !selected_entry
+                            .and_then(|entry| entry.as_branch())
+                            .is_some_and(|branch| branch.is_head),
+                        |this| {
+                            this.child(
+                                Button::new("delete-branch", "Delete")
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &branch_picker::DeleteBranch,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                    )
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            branch_picker::DeleteBranch.boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
                             )
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
-                            })
-                            .disabled(
-                                selected_entry
-                                    .and_then(|entry| entry.as_branch())
-                                    .is_some_and(|branch| branch.is_head),
-                            ),
+                        },
                     )
                     .child(
                         Button::new("select_branch", "Select")
