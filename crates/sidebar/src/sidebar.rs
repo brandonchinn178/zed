@@ -642,7 +642,7 @@ impl Sidebar {
 
         for (i, workspace) in workspaces.iter().enumerate() {
             for snapshot in root_repository_snapshots(workspace, cx) {
-                if snapshot.work_directory_abs_path == snapshot.original_repo_abs_path {
+                if snapshot.is_main_worktree() {
                     main_repo_workspace
                         .entry(snapshot.work_directory_abs_path.clone())
                         .or_insert(i);
@@ -748,7 +748,7 @@ impl Sidebar {
                     let mut linked_worktree_queries: Vec<(PathList, SharedString, Arc<Path>)> =
                         Vec::new();
                     for snapshot in root_repository_snapshots(workspace, cx) {
-                        if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
+                        if snapshot.is_linked_worktree() {
                             continue;
                         }
 
@@ -1373,7 +1373,7 @@ impl Sidebar {
         let mut known_worktree_paths: HashSet<std::path::PathBuf> = HashSet::new();
         for workspace in &workspaces {
             for snapshot in root_repository_snapshots(workspace, cx) {
-                if snapshot.work_directory_abs_path != snapshot.original_repo_abs_path {
+                if snapshot.is_linked_worktree() {
                     continue;
                 }
                 for git_worktree in snapshot.linked_worktrees() {
@@ -1395,7 +1395,7 @@ impl Sidebar {
             let should_prune = root_repository_snapshots(workspace, cx)
                 .iter()
                 .any(|snapshot| {
-                    snapshot.work_directory_abs_path != snapshot.original_repo_abs_path
+                    snapshot.is_linked_worktree()
                         && !known_worktree_paths.contains(snapshot.work_directory_abs_path.as_ref())
                 });
             if should_prune {
