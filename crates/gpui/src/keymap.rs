@@ -171,7 +171,7 @@ impl Keymap {
         let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
 
         for (ix, binding) in self.bindings().enumerate().rev() {
-            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+            let Some(depth) = Keymap::binding_enabled(binding, context_stack) else {
                 continue;
             };
             let Some(pending) = binding.match_keystrokes(input) else {
@@ -243,7 +243,7 @@ impl Keymap {
     }
     /// Check if the given binding is enabled, given a certain key context.
     /// Returns the deepest depth at which the binding matches, or None if it doesn't match.
-    fn binding_enabled(&self, binding: &KeyBinding, contexts: &[KeyContext]) -> Option<usize> {
+    fn binding_enabled(binding: &KeyBinding, contexts: &[KeyContext]) -> Option<usize> {
         if let Some(predicate) = &binding.context_predicate {
             predicate.depth_of(contexts)
         } else {
@@ -262,7 +262,7 @@ impl Keymap {
             .enumerate()
             .rev()
             .filter_map(|(ix, binding)| {
-                let depth = self.binding_enabled(binding, context_stack)?;
+                let depth = Keymap::binding_enabled(binding, context_stack)?;
                 let pending = binding.match_keystrokes(input);
                 match pending {
                     None => None,
@@ -313,28 +313,28 @@ mod tests {
         keymap.add_bindings(bindings.clone());
 
         // global bindings are enabled in all contexts
-        assert_eq!(keymap.binding_enabled(&bindings[0], &[]), Some(0));
+        assert_eq!(Keymap::binding_enabled(&bindings[0], &[]), Some(0));
         assert_eq!(
-            keymap.binding_enabled(&bindings[0], &[KeyContext::parse("terminal").unwrap()]),
-            Some(1)
+            Keymap::binding_enabled(&bindings[0], &[KeyContext::parse("terminal").unwrap()]),
+            Some(0)
         );
 
         // contextual bindings are enabled in contexts that match their predicate
         assert_eq!(
-            keymap.binding_enabled(&bindings[1], &[KeyContext::parse("barf x=y").unwrap()]),
+            Keymap::binding_enabled(&bindings[1], &[KeyContext::parse("barf x=y").unwrap()]),
             None
         );
         assert_eq!(
-            keymap.binding_enabled(&bindings[1], &[KeyContext::parse("pane x=y").unwrap()]),
+            Keymap::binding_enabled(&bindings[1], &[KeyContext::parse("pane x=y").unwrap()]),
             Some(1)
         );
 
         assert_eq!(
-            keymap.binding_enabled(&bindings[2], &[KeyContext::parse("editor").unwrap()]),
+            Keymap::binding_enabled(&bindings[2], &[KeyContext::parse("editor").unwrap()]),
             None
         );
         assert_eq!(
-            keymap.binding_enabled(
+            Keymap::binding_enabled(
                 &bindings[2],
                 &[KeyContext::parse("editor mode=full").unwrap()]
             ),
@@ -854,5 +854,26 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert!(result[0].action.partial_eq(&ActionBeta {}));
         assert!(result[1].action.partial_eq(&ActionAlpha {}));
+    }
+
+    #[test]
+    fn test_binding_enabled_order() {
+        let specific = KeyBinding::new("cmd-r", ActionBeta {}, Some("Editor"));
+        let global = KeyBinding::new("cmd-r", ActionAlpha {}, None);
+
+        let parent_context = KeyContext::try_from("Editor").unwrap();
+        let child_context = KeyContext::try_from("Editand").unwrap();
+
+        let nested_context = vec![parent_context, child_context];
+        let exactly_matching_context = &nested_context[..1];
+
+        assert!(
+            Keymap::binding_enabled(&specific, exactly_matching_context)
+                > Keymap::binding_enabled(&global, exactly_matching_context)
+        );
+        assert!(
+            Keymap::binding_enabled(&specific, &nested_context)
+                > Keymap::binding_enabled(&global, &nested_context)
+        );
     }
 }
