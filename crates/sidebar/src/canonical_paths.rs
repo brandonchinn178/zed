@@ -16,7 +16,7 @@ use std::{
 
 use gpui::App;
 use project::git_store::RepositorySnapshot;
-use workspace::Workspace;
+use workspace::{PathList, Workspace};
 
 pub struct PathCanonicalizer {
     /// Maps git repositories' work_directory_abs_path to their original_repo_abs_path
@@ -54,14 +54,25 @@ impl PathCanonicalizer {
     }
 
     pub fn add_workspace_mappings(&mut self, workspace: &Workspace, cx: &App) {
-        for (_, repo) in workspace.project().read(cx).repositories(cx) {
+        for repo in workspace.project().read(cx).repositories(cx).values() {
             let snapshot = repo.read(cx).snapshot();
             self.add_snapshot_mapping(&snapshot);
         }
     }
 
-    pub fn canonicalize_path(&self, path: &Path) -> Option<&Path> {
-        self.directory_mappings.get(path).map(|p| p.as_path())
+    pub fn canonicalize_path<'a>(&'a self, path: &'a Path) -> &'a Path {
+        self.directory_mappings
+            .get(path)
+            .map(AsRef::as_ref)
+            .unwrap_or(path)
+    }
+
+    pub fn canonicalize_path_list(&self, path_list: PathList) -> PathList {
+        let paths: Vec<_> = path_list
+            .ordered_paths()
+            .map(|path| self.canonicalize_path(path))
+            .collect();
+        PathList::new(&paths)
     }
 }
 
@@ -140,13 +151,13 @@ mod tests {
             // The main repo path should canonicalize to itself.
             assert_eq!(
                 canonicalizer.canonicalize_path(Path::new("/project")),
-                Some(Path::new("/project")),
+                Path::new("/project"),
             );
 
             // An unknown path returns None.
             assert_eq!(
                 canonicalizer.canonicalize_path(Path::new("/something/else")),
-                None,
+                Path::new("/something/else"),
             );
         });
     }
@@ -176,7 +187,7 @@ mod tests {
             // The worktree checkout path should canonicalize to the main repo.
             assert_eq!(
                 canonicalizer.canonicalize_path(Path::new("/wt/feature-a")),
-                Some(Path::new("/project")),
+                Path::new("/project"),
             );
         });
     }

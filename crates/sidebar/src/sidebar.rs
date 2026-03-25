@@ -1,4 +1,4 @@
-use acp_thread::ThreadStatus;
+use acp_thread::{AgentSessionInfo, ThreadStatus};
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_ui::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata};
@@ -13,7 +13,7 @@ use editor::Editor;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, ListState, Pixels,
-    Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
+    ReadGlobal, Render, SharedString, WeakEntity, Window, WindowHandle, list, prelude::*, px,
 };
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
@@ -44,6 +44,8 @@ use zed_actions::OpenRecent;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
+
+use crate::canonical_paths::PathCanonicalizer;
 
 mod canonical_paths;
 
@@ -141,7 +143,7 @@ enum ListEntry {
     ProjectHeader {
         path_list: PathList,
         label: SharedString,
-        workspace: Entity<Workspace>,
+        workspace: Option<Entity<Workspace>>, // todo! should this really be an option?
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
         waiting_thread_count: usize,
@@ -560,9 +562,256 @@ impl Sidebar {
         result
     }
 
+    /// This is a new rebuild_contents function that's being updated from the
+    /// old one to try to refactor more cleanly.
+    fn rebuild_contents(&mut self, cx: &App) {
+        if let Some(mw) = self.multi_workspace.upgrade() {
+            self.contents = self.build_contents(mw.read(cx), cx);
+        }
+    }
+
+    /// Builds the contents of the sidebar.
+    ///
+    /// This looks over the list of active workspaces, threads, etc. and creates
+    /// a set of list entries and headers to be displayed in the sidebar.
+    ///
+    /// It is O(W + T log T), where W is the number of workspaces and T is the
+    /// number of threads.
+    ///
+    /// TODO: We can sort in the database and then this becomes O(W + T).
+    ///
+    /// Properties:
+    /// - Should always show every workspace in the multiworkspace
+    ///     - If you have no threads, and two workspaces for the worktree and the main workspace, make sure at least one is shown
+    /// - Should always show every thread, associated with each workspace in the multiworkspace
+    /// - After every build_contents, our "active" state should exactly match the current workspace's, current agent panel's current thread.
+    fn build_contents(&self, mw: &MultiWorkspace, cx: &App) -> SidebarContents {
+        // TODO: build_contents might work better as a method on SidebarContents.
+
+        // The idea here is to group sidebar entries by "canonical headings."
+        // Canonical headings are derives from the root folders in a workspace,
+        // but mapped to the path of the main git worktree. For threads that are
+        // unloaded, and therefore do not have a workspace with them, we use the
+        // serialized path metadata.
+
+        // We also need to apply query filters.
+
+        // We care mostly about threads, so first let's gather all the threads.
+        // Threads can come from:
+        // - Active workspaces (loaded threads)
+        // - Unloaded threads (from serialized path metadata)
+
+        // TODO: We also need to figure out how to show workspaces with no
+        // threads.
+
+        let thread_store = SidebarThreadMetadataStore::global(cx).read(cx);
+
+        // The thread_store already groups threads by path list, but these are
+        // absolute paths, not canonicalized.
+        //
+        // To canonicalize a path, we need to get the git metadata for that
+        // path. It's not clear how expensive this will be, or if we need to
+        // have a workspace or something to get access to it...
+
+        // === Build the list of top level headings and the path canonicalizer ===
+        let mut threads_by_canonical_path = HashMap::new();
+        let mut canonicalizer = PathCanonicalizer::new();
+        for workspace in mw.workspaces() {
+            canonicalizer.add_workspace_mappings(workspace.read(cx), cx);
+
+            let header_paths = workspace_header_paths(workspace, cx);
+            threads_by_canonical_path
+                .entry(header_paths)
+                .or_insert_with(|| Vec::new());
+
+            // TODO: we might want to also store the workspace in the hashmap
+        }
+        let canonicalizer = canonicalizer; // we don't need mut anymore
+
+        /*
+         * struct ProjectGroup {
+         *    workspaces: Vec<Entity<Workspace>> // Only used for optimizing clicks in the sidebar ()
+         *    worktrees: HashSet<PathList>, // only used for querying the database
+         * }
+         *
+         * let project_groups = HashMap::<CanonicalPathList, ProjectGroup>::new();
+         * for workspace in multiworkspace {
+         *   let canonical = workspace.canonicalical_path_list();
+         *   let entry = project_groups.entry(canonical).or_insert_with(|| ProjectGroup {
+         *       workspaces: Vec::new(),
+         *       worktres: Vec::new(),
+         *   });
+         *   entry.workspaces.push(workspace.clone());
+         *   entry.worktres.insert(workspace.worktrees().clone());
+         * }
+         * // NOW that we've developed this grouping, we need to LEFT JOIN all of these paths lists with the threads
+         *        THEN seperate it out into the individual entries in the sidebar into the threads
+         *
+         * // Eric's BUG: Having a single workspace open, which only is a "worktree workspace"
+         *
+         * enum ThreadEntryWorkspace {
+         *   Open(Entity<Workspace>),
+         *   Closed(CanonicalPathList),
+         * }
+         *
+         * enum ThreadEntry {
+         *   ProjectHeader(String)
+         *   Thread {
+         *     // <snip>
+         *     workspace: ThreadEntryWorkspace,
+         *   }
+         * }
+         *
+         *
+         */
+
+        // === Map threads to their headings ===
+
+        // TODO: rather than iterate over all entries, use the path lists from the workspaces that we found above.
+        for thread in thread_store.entries() {
+            let canonical_path = canonicalizer.canonicalize_path_list(thread.folder_paths.clone());
+
+            // TODO: convert thread from ThreadMetaData to ThreadEntry
+            // thread.agent_id
+            let thread = ThreadEntry {
+                agent: agent_ui::Agent::NativeAgent, //todo! Get this from the database
+                session_info: AgentSessionInfo {
+                    session_id: thread.session_id,
+                    work_dirs: Some(thread.folder_paths.clone()),
+                    title: Some(thread.title),
+                    updated_at: Some(thread.updated_at),
+                    created_at: thread.created_at,
+                    meta: None, // todo!
+                },
+                icon: IconName::ZedAssistant, // todo! use the real icon
+                icon_from_external_svg: None, // todo!
+                status: AgentThreadStatus::default(), // todo!
+                workspace: ThreadEntryWorkspace::Closed(thread.folder_paths.clone()), // todo!
+                is_live: false,               // todo!
+                is_background: false,         // todo!
+                is_title_generating: false,   // todo!
+                highlight_positions: Vec::new(), // todo!
+                worktree_name: None,          // todo!
+                worktree_full_path: None,     // todo!
+                worktree_highlight_positions: Vec::new(), // todo!
+                diff_stats: DiffStats {
+                    // todo!
+                    lines_added: 0,
+                    lines_removed: 0,
+                },
+            };
+
+            threads_by_canonical_path
+                .entry(canonical_path)
+                .or_insert_with(|| {
+                    // TODO: this is probably okay, we just would not show the thread.
+                    dbg!("found thread that does not map to a workspace");
+                    Vec::new()
+                })
+                .push(thread);
+        }
+
+        // at this point, if any key has an empty vec associated with it, that
+        // means there is not thread in that workspace yet.
+        // Note: (It might be impossible for a workspace to not have a thread because the agent panel creates a new thread on start up, this could be a good debug assertion)
+
+        // notes....
+        // idea
+        //
+        // Let's look at the case where workspace.project().visible_worktrees().len() == 1 at first
+        //
+        //
+        //
+        // let (worktree_ids, repos) = workspace.project().git_store().repositories()....clone;
+        //
+        // ... created a map
+        // let map: HashMap<WorktreeId, LinkedWorktree> =
+        //
+        //
+        //
+        //
+        // // We have to pair linked_worktrees with their corresponding visible worktree repo
+        // let linked_worktrees = repos.iter().map(|repo| repo.snapshot().linked_worktrees()).collect::<Vec<_>>();
+        //
+        // for linked_worktree in linked_worktrees {
+        //
+        //    let linked_worktree_threads = ThreadDB::get_threads_for_worktree(&[linked_worktree])
+        //
+        // }
+        //
+        //
+        // Cons
+        //
+        // - We would have to change this a bit for project.visible_worktrees.len() > 1
+        // - We don't want to be reading from the database whenever we can help it. This could be slow. (We cache the results on first load so not a big deal)
+        // -
+        //
+        // Multi visible worktrees case
+        //
+        //
+
+        // Thread sidebar shows threads.
+        //
+        // let mut threads_by_main_paths = HashMap::<PathList, Vec<Thread>>::new();
+        //
+        // for thread in threads_db.all_threads() { -> do we need to filter by only-open workspaces?
+        //    let path_list = thread.pathlist -> e.g. [code worktrees/zed/olivetti, code/worktrees/ex/olivetti]
+        //    let canonical_path_list = path_list.map(|path| find_main_worktree_for_linked_worktree(path))  -> [code/zed, code/ex]
+        //
+        //    thread_by_main_paths[canonical_path_list].push(thread);
+        // }
+        //
+        // === to build sidebar ===
+        //
+        // let mut entries = Vec::new();
+        // for (header, threads) in threads_by_main_paths {
+        //    entries.push(Header(header));
+        //    for thread in threads {
+        //        entries.push(Thread(thread));
+        //    }
+        // }
+        //
+        // Open questions:
+        // - do we show threads if the user deletes the worktrees that the thread relied on?
+        // - how do we handle renames?
+        //   - do we want to let the user edit the paths associated with a thread
+        // - What if we have a workspace but no thread?
+        //   - Maybe we need a sidebar entry for a workspace with no thread?
+        //   - Or create an empty thread when you open a workspace?
+        // - What if we have folders not backed by git?
+
+        let notified_threads = HashSet::new(); // TODO
+
+        let project_header_indices = Vec::new(); // TODO
+
+        let mut entries = Vec::new();
+
+        for (header, threads) in threads_by_canonical_path {
+            entries.push(ListEntry::ProjectHeader {
+                path_list: header.clone(),
+                label: SharedString::new("TODO!"),
+                workspace: Some(mw.workspace().clone()), // todo!
+                highlight_positions: Vec::new(),
+                has_running_threads: false,
+                waiting_thread_count: 0,
+                is_active: false,
+            });
+            for thread in threads {
+                entries.push(ListEntry::Thread(thread))
+            }
+        }
+
+        SidebarContents {
+            entries,
+            notified_threads,
+            project_header_indices,
+            has_open_projects: mw.workspaces().len() > 0, // todo!
+        }
+    }
+
     /// When modifying this thread, aim for a single forward pass over workspaces
     /// and threads plus an O(T log T) sort. Avoid adding extra scans over the data.
-    fn rebuild_contents(&mut self, cx: &App) {
+    fn _rebuild_contents(&mut self, cx: &App) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -629,6 +878,8 @@ impl Sidebar {
         // "absorbed" when it points at a git worktree checkout whose main
         // repo is open as another workspace — its threads appear under the
         // main repo's header instead of getting their own.
+
+        // The workspace associated with the main repo of a set of worktrees.
         let mut main_repo_workspace: HashMap<Arc<Path>, usize> = HashMap::new();
         let mut absorbed: HashMap<usize, (usize, SharedString)> = HashMap::new();
         let mut pending: HashMap<Arc<Path>, Vec<(usize, SharedString, Arc<Path>)>> = HashMap::new();
@@ -736,7 +987,7 @@ impl Sidebar {
                         .is_some_and(|(main_idx, _)| *main_idx == ws_index)
             });
 
-            let mut live_infos: Vec<_> = all_thread_infos_for_workspace(workspace, cx).collect();
+            let mut live_infos: Vec<_> = active_thread_infos_for_workspace(workspace, cx).collect();
 
             let mut threads: Vec<ThreadEntry> = Vec::new();
             let mut has_running_threads = false;
@@ -815,16 +1066,17 @@ impl Sidebar {
                     for (worktree_path_list, worktree_name, worktree_path) in
                         &linked_worktree_queries
                     {
-                        let target_workspace = match absorbed_workspace_by_path
-                            .get(worktree_path.as_ref())
-                        {
-                            Some(&idx) => {
-                                live_infos
-                                    .extend(all_thread_infos_for_workspace(&workspaces[idx], cx));
-                                ThreadEntryWorkspace::Open(workspaces[idx].clone())
-                            }
-                            None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
-                        };
+                        let target_workspace =
+                            match absorbed_workspace_by_path.get(worktree_path.as_ref()) {
+                                Some(&idx) => {
+                                    live_infos.extend(active_thread_infos_for_workspace(
+                                        &workspaces[idx],
+                                        cx,
+                                    ));
+                                    ThreadEntryWorkspace::Open(workspaces[idx].clone())
+                                }
+                                None => ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
+                            };
 
                         let worktree_rows: Vec<_> = thread_store
                             .read(cx)
@@ -927,7 +1179,7 @@ impl Sidebar {
                     b_time.cmp(&a_time)
                 });
             } else {
-                for info in &live_infos {
+                for info in live_infos {
                     if info.status == AgentThreadStatus::Running {
                         has_running_threads = true;
                     }
@@ -975,7 +1227,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
-                    workspace: workspace.clone(),
+                    workspace: Some(workspace.clone()),
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
                     waiting_thread_count,
@@ -999,7 +1251,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
-                    workspace: workspace.clone(),
+                    workspace: Some(workspace.clone()),
                     highlight_positions: Vec::new(),
                     has_running_threads,
                     waiting_thread_count,
@@ -1150,7 +1402,7 @@ impl Sidebar {
                 false,
                 path_list,
                 label,
-                workspace,
+                &workspace.clone().unwrap(),
                 highlight_positions,
                 *has_running_threads,
                 *waiting_thread_count,
@@ -1622,7 +1874,7 @@ impl Sidebar {
             true,
             &path_list,
             &label,
-            &workspace,
+            &workspace.clone().unwrap(),
             &highlight_positions,
             *has_running_threads,
             *waiting_thread_count,
@@ -2396,7 +2648,7 @@ impl Sidebar {
                 // when metadata is saved via ThreadMetadata::from_thread.
                 let target_workspace = match &next.workspace {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
-                    ThreadEntryWorkspace::Closed(_) => group_workspace,
+                    ThreadEntryWorkspace::Closed(_) => group_workspace.clone().unwrap(),
                 };
 
                 if let Some(workspace) = target_workspace {
@@ -2417,7 +2669,9 @@ impl Sidebar {
             } else {
                 self.focused_thread = None;
                 if let Some(workspace) = &group_workspace {
-                    if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                    if let Some(agent_panel) =
+                        workspace.clone().unwrap().read(cx).panel::<AgentPanel>(cx)
+                    {
                         agent_panel.update(cx, |panel, cx| {
                             panel.new_thread(&NewThread, window, cx);
                         });
@@ -2717,16 +2971,18 @@ impl Sidebar {
                 })
         } else {
             // Use the currently active workspace.
-            self.multi_workspace
-                .upgrade()
-                .map(|mw| mw.read(cx).workspace().clone())
+            Some(
+                self.multi_workspace
+                    .upgrade()
+                    .map(|mw| mw.read(cx).workspace().clone()),
+            )
         };
 
         let Some(workspace) = workspace else {
             return;
         };
 
-        self.create_new_thread(&workspace, window, cx);
+        self.create_new_thread(&workspace.as_ref().unwrap(), window, cx);
     }
 
     fn create_new_thread(
@@ -2958,9 +3214,7 @@ impl Sidebar {
                 }
             })
     }
-}
 
-impl Sidebar {
     fn toggle_archive(&mut self, _: &ToggleArchive, window: &mut Window, cx: &mut Context<Self>) {
         match &self.view {
             SidebarView::ThreadList => self.show_archive(window, cx),
@@ -3170,7 +3424,7 @@ impl Render for Sidebar {
     }
 }
 
-fn all_thread_infos_for_workspace(
+fn active_thread_infos_for_workspace(
     workspace: &Entity<Workspace>,
     cx: &App,
 ) -> impl Iterator<Item = ActiveThreadInfo> {
@@ -3239,6 +3493,37 @@ fn all_thread_infos_for_workspace(
 
     ThreadInfoIterator::Threads(threads)
 }
+
+/// Derives a pathlist of the original repo abs paths for the given workspace,
+/// which will be shown in the header for this workspace in the sidebar.
+fn workspace_header_paths(workspace: &Entity<Workspace>, cx: &App) -> PathList {
+    // TODO: We need to come up with something if this is not backed by git.
+
+    let mut paths = Vec::new();
+    for repo in workspace
+        .read(cx)
+        .project()
+        .read(cx)
+        .repositories(cx)
+        .values()
+    {
+        let snapshot = repo.read(cx).snapshot();
+        paths.push(snapshot.original_repo_abs_path.to_path_buf());
+    }
+
+    PathList::new(&paths)
+}
+
+// operations [Op::delete, Op::rename, etc]
+//
+//
+// cx.observe(&mut sidebar, |sidebar, cx| {assert_state(sidebar)});
+//
+// for op in operations {
+//  op.handle(&mut expected_state, &mut sidebar, cx: &mut App);
+// assert_state(sidebar, expected_state)
+// }
+// assert_state()
 
 #[cfg(test)]
 mod tests {
@@ -3794,7 +4079,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: expanded_path.clone(),
                     label: "expanded-project".into(),
-                    workspace: workspace.clone(),
+                    workspace: Some(workspace.clone()),
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
                     waiting_thread_count: 0,
@@ -3928,7 +4213,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: collapsed_path.clone(),
                     label: "collapsed-project".into(),
-                    workspace: workspace.clone(),
+                    workspace: Some(workspace.clone()),
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
                     waiting_thread_count: 0,
