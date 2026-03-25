@@ -1,15 +1,20 @@
-use std::{cmp, ops::Range};
+use std::ops::Range;
 
 use collections::HashMap;
 use futures::FutureExt;
 use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
-use language::language_settings::language_settings;
-use language::{Buffer, BufferSnapshot, OutlineItem};
-use multi_buffer::{Anchor, MultiBufferSnapshot};
-use text::{Bias, BufferId, OffsetRangeExt as _, ToOffset as _};
+use language::language_settings::LanguageSettings;
+use language::{Buffer, OutlineItem};
+use multi_buffer::{
+    Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset as _,
+};
+use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
+use unicode_segmentation::UnicodeSegmentation as _;
+use util::maybe;
 
 use crate::display_map::DisplaySnapshot;
 use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
@@ -74,10 +79,24 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         _cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
+<<<<<<< HEAD
         let (cursor_text_anchor, buffer) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
         let all_items = self
             .lsp_document_symbols
             .get(&cursor_text_anchor.buffer_id)?;
+=======
+        let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
+        let excerpt_id = excerpt.id();
+        let buffer_id = excerpt.buffer_id();
+        if Some(buffer_id) != cursor.text_anchor.buffer_id {
+            return None;
+        }
+        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let cursor_text_anchor = cursor.text_anchor;
+
+        let all_items = self.lsp_document_symbols.get(&buffer_id)?;
+>>>>>>> origin/main
         if all_items.is_empty() {
             return None;
         }
@@ -134,7 +153,7 @@ impl Editor {
         for_buffer: Option<BufferId>,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -207,10 +226,20 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
+<<<<<<< HEAD
                         for (buffer_id, items) in &mut highlighted_results {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*buffer_id) {
                                 let snapshot = buffer.read(cx).snapshot();
                                 apply_highlights(items, &snapshot, &display_snapshot, &syntax);
+=======
+                        for items in highlighted_results.values_mut() {
+                            for item in items {
+                                if let Some(highlights) =
+                                    highlights_from_buffer(&display_snapshot, &item, &syntax)
+                                {
+                                    item.highlight_ranges = highlights;
+                                }
+>>>>>>> origin/main
                             }
                         }
                         editor.lsp_document_symbols.extend(highlighted_results);
@@ -223,11 +252,12 @@ impl Editor {
 }
 
 fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
-    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+    LanguageSettings::for_buffer(buffer, cx)
         .document_symbols
         .lsp_enabled()
 }
 
+<<<<<<< HEAD
 /// Applies combined syntax + semantic token highlights to LSP document symbol
 /// outline items that were built without highlights by the project layer.
 fn apply_highlights(
@@ -254,6 +284,8 @@ fn apply_highlights(
     }
 }
 
+=======
+>>>>>>> origin/main
 /// Finds where the symbol name appears in the buffer and returns combined
 /// (tree-sitter + semantic token) highlights for those positions.
 ///
@@ -262,33 +294,44 @@ fn apply_highlights(
 /// to word-by-word matching for cases like `impl<T> Trait<T> for Type`
 /// where the LSP name doesn't appear verbatim in the buffer.
 fn highlights_from_buffer(
+<<<<<<< HEAD
     name: &str,
     name_offset_in_text: usize,
     buffer_snapshot: &BufferSnapshot,
+=======
+>>>>>>> origin/main
     display_snapshot: &DisplaySnapshot,
-    symbol_range: Range<usize>,
-    selection_start_offset: usize,
+    item: &OutlineItem<text::Anchor>,
     syntax_theme: &SyntaxTheme,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    if name.is_empty() {
+    let outline_text = &item.text;
+    if outline_text.is_empty() {
         return None;
     }
 
-    let range_start_offset = symbol_range.start;
-    let range_end_offset = symbol_range.end;
+    let multi_buffer_snapshot = display_snapshot.buffer();
+    let multi_buffer_source_range_anchors =
+        multi_buffer_snapshot.text_anchors_to_visible_anchors([
+            item.source_range_for_text.start,
+            item.source_range_for_text.end,
+        ]);
+    let Some(anchor_range) = maybe!({
+        Some(
+            (*multi_buffer_source_range_anchors.get(0)?)?
+                ..(*multi_buffer_source_range_anchors.get(1)?)?,
+        )
+    }) else {
+        return None;
+    };
 
-    // Try to find the name verbatim in the buffer near the selection range.
-    let search_start = buffer_snapshot.clip_offset(
-        selection_start_offset
-            .saturating_sub(name.len())
-            .max(range_start_offset),
-        Bias::Right,
-    );
-    let search_end = buffer_snapshot.clip_offset(
-        cmp::min(selection_start_offset + name.len() * 2, range_end_offset),
-        Bias::Left,
-    );
+    let selection_point_range = anchor_range.to_point(multi_buffer_snapshot);
+    let mut search_start = selection_point_range.start;
+    search_start.column = 0;
+    let search_start_offset = search_start.to_offset(&multi_buffer_snapshot);
+    let mut search_end = selection_point_range.end;
+    search_end.column = multi_buffer_snapshot.line_len(MultiBufferRow(search_end.row));
 
+<<<<<<< HEAD
     if search_start < search_end {
         let buffer_text: String = buffer_snapshot
             .text_for_range(search_start..search_end)
@@ -302,13 +345,45 @@ fn highlights_from_buffer(
                 buffer_snapshot,
                 display_snapshot,
                 syntax_theme,
+=======
+    let search_text = multi_buffer_snapshot
+        .text_for_range(search_start..search_end)
+        .collect::<String>();
+
+    let mut outline_text_highlights = Vec::new();
+    match search_text.find(outline_text) {
+        Some(start_index) => {
+            let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
+            let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());
+            outline_text_highlights.extend(
+                display_snapshot
+                    .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme),
+>>>>>>> origin/main
             );
-            if result.is_some() {
-                return result;
+        }
+        None => {
+            for (outline_text_word_start, outline_word) in outline_text.split_word_bound_indices() {
+                if let Some(start_index) = search_text.find(outline_word) {
+                    let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
+                    let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_word.len());
+                    outline_text_highlights.extend(
+                        display_snapshot
+                            .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme)
+                            .into_iter()
+                            .map(|(range_in_word, style)| {
+                                (
+                                    outline_text_word_start + range_in_word.start
+                                        ..outline_text_word_start + range_in_word.end,
+                                    style,
+                                )
+                            }),
+                    );
+                }
             }
         }
     }
 
+<<<<<<< HEAD
     // Fallback: match word-by-word. Split the name on whitespace and find
     // each word sequentially in the buffer's symbol range.
     let range_start_offset = buffer_snapshot.clip_offset(range_start_offset, Bias::Right);
@@ -372,6 +447,13 @@ fn highlights_for_buffer_range(
             })
             .collect(),
     )
+=======
+    if outline_text_highlights.is_empty() {
+        None
+    } else {
+        Some(outline_text_highlights)
+    }
+>>>>>>> origin/main
 }
 
 #[cfg(test)]

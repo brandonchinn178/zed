@@ -12,6 +12,7 @@ mod highlight_map;
 mod language_registry;
 pub mod language_settings;
 mod manifest;
+pub mod modeline;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -23,7 +24,7 @@ mod toolchain;
 pub mod buffer_tests;
 
 use crate::language_settings::SoftWrap;
-pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
+pub use crate::language_settings::{AutoIndentMode, EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -40,6 +41,7 @@ use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
 };
 pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
+pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
@@ -138,6 +140,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             matcher: LanguageMatcher {
                 path_suffixes: vec!["txt".to_owned()],
                 first_line_pattern: None,
+                modeline_aliases: vec!["text".to_owned(), "txt".to_owned()],
             },
             brackets: BracketPairConfig {
                 pairs: vec![
@@ -491,6 +494,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)
     }
@@ -834,6 +838,11 @@ pub struct LanguageConfig {
     pub name: LanguageName,
     /// The name of this language for a Markdown code fence block
     pub code_fence_block_name: Option<Arc<str>>,
+    /// Alternative language names that Jupyter kernels may report for this language.
+    /// Used when a kernel's `language` field differs from Zed's language name.
+    /// For example, the Nu extension would set this to `["nushell"]`.
+    #[serde(default)]
+    pub kernel_language_names: Vec<Arc<str>>,
     // The name of the grammar in a WASM bundle (experimental).
     pub grammar: Option<Arc<str>>,
     /// The criteria for matching this language to a given file.
@@ -955,6 +964,15 @@ pub struct LanguageConfig {
     pub import_path_strip_regex: Option<Regex>,
 }
 
+impl LanguageConfig {
+    pub const FILE_NAME: &str = "config.toml";
+
+    pub fn load(config_path: impl AsRef<Path>) -> Result<Self> {
+        let config = std::fs::read_to_string(config_path.as_ref())?;
+        toml::from_str(&config).map_err(Into::into)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Default, JsonSchema)]
 pub struct DecreaseIndentConfig {
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -995,6 +1013,11 @@ pub struct LanguageMatcher {
     )]
     #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
+    /// Alternative names for this language used in vim/emacs modelines.
+    /// These are matched case-insensitively against the `mode` (emacs) or
+    /// `filetype`/`ft` (vim) specified in the modeline.
+    #[serde(default)]
+    pub modeline_aliases: Vec<String>,
 }
 
 /// The configuration for JSX tag auto-closing.
@@ -1140,6 +1163,7 @@ impl Default for LanguageConfig {
         Self {
             name: LanguageName::new_static(""),
             code_fence_block_name: None,
+            kernel_language_names: Default::default(),
             grammar: None,
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
@@ -2074,6 +2098,23 @@ impl Language {
             .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
     }
 
+    pub fn matches_kernel_language(&self, kernel_language: &str) -> bool {
+        let kernel_language_lower = kernel_language.to_lowercase();
+
+        if self.code_fence_block_name().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        if self.config.name.as_ref().to_lowercase() == kernel_language_lower {
+            return true;
+        }
+
+        self.config
+            .kernel_language_names
+            .iter()
+            .any(|name| name.to_lowercase() == kernel_language_lower)
+    }
+
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
     }
@@ -2638,6 +2679,7 @@ impl LspAdapter for FakeLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
     }
@@ -2767,6 +2809,46 @@ pub fn rust_lang() -> Arc<Language> {
                 ..Default::default()
             },
             line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "[".into(),
+                        end: "]".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "<".into(),
+                        end: ">".into(),
+                        close: false,
+                        surround: false,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "\"".into(),
+                        end: "\"".into(),
+                        close: true,
+                        surround: false,
+                        newline: false,
+                    },
+                ],
+                ..Default::default()
+            },
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),

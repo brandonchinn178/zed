@@ -1,0 +1,40 @@
+thread 'main' (1509757) panicked at /media/cole/big/zed/crates/multi_buffer/src/multi_buffer.rs:6874:23:
+cannot seek backward
+stack backtrace:
+   0: __rustc::rust_begin_unwind
+             at /rustc/01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf/library/std/src/panicking.rs:689:5
+   1: core::panicking::panic_fmt
+             at /rustc/01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf/library/core/src/panicking.rs:80:14
+   2: sum_tree::cursor::Cursor<T,D>::seek_internal
+             at ./crates/sum_tree/src/cursor.rs:463:9
+   3: sum_tree::cursor::Cursor<T,D>::seek_forward
+             at ./crates/sum_tree/src/cursor.rs:419:14
+   4: multi_buffer::MultiBufferCursor<MBD,BD>::seek_forward
+             at ./crates/multi_buffer/src/multi_buffer.rs:6874:23
+   5: multi_buffer::MultiBufferSnapshot::excerpt_containing
+             at ./crates/multi_buffer/src/multi_buffer.rs:6389:20
+   6: editor::element::EditorElement::layout_inline_code_actions::{{closure}}
+             at ./crates/editor/src/element.rs:2605:22
+   7: editor::element::EditorElement::layout_inline_code_actions::{{closure}}
+             at ./crates/editor/src/element.rs:2635:53
+   8: core::iter::traits::iterator::Iterator::find_map::check::{{closure}}
+             at /home/cole/.rustup/toolchains/1.93-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:2915:32
+   9: <core::ops::range::RangeInclusive<T> as core::iter::range::RangeInclusiveIteratorImpl>::spec_try_fold
+             at /home/cole/.rustup/toolchains/1.93-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1189:21
+  10: core::iter::range::<impl core::iter::traits::iterator::Iterator for core::ops::range::RangeInclusive<A>>::try_fold
+             at /home/cole/.rustup/toolchains/1.93-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/range.rs:1313:14
+  11: core::iter::traits::iterator::Iterator::find_map
+             at /home/cole/.rustup/toolchains/1.93-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:2921:14
+  12: editor::element::EditorElement::layout_inline_code_actions
+             at ./crates/editor/src/element.rs:2632:42
+  13: <editor::element::EditorElement as gpui::element::Element>::prepaint::{{closure}}::{{closure}}::{{closure}}
+             at ./crates/editor/src/element.rs:10548:56
+  14: gpui::window::Window::with_content_mask
+             at ./crates/gpui/src/window.rs:2667:26
+  15: <editor::element::EditorElement as gpui::element::Element>::prepaint::{{closure}}::{{closure}}
+             at ./crates/editor/src/element.rs:9641:24
+  16: gpui::window::Window::with_text_style
+             at ./crates/gpui/src/window.rs:2612:26
+  17: <editor::element::EditorElement as gpui::element::Element>::prepaint::{{closure}}
+             at ./crates/editor/src/element.rs:9640:20
+  18: gpui::window::Window::with_rem_size

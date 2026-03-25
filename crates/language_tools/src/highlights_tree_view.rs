@@ -208,20 +208,32 @@ impl HighlightsTreeView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(editor) = active_item
-            .filter(|item| item.item_id() != cx.entity_id())
-            .and_then(|item| item.downcast::<Editor>())
-        else {
-            self.clear(cx);
-            return;
+        let active_editor = match active_item {
+            Some(active_item) => {
+                if active_item.item_id() == cx.entity_id() {
+                    return;
+                } else {
+                    match active_item.downcast::<Editor>() {
+                        Some(active_editor) => active_editor,
+                        None => {
+                            self.clear(cx);
+                            return;
+                        }
+                    }
+                }
+            }
+            None => {
+                self.clear(cx);
+                return;
+            }
         };
 
         let is_different_editor = self
             .editor
             .as_ref()
-            .is_none_or(|state| state.editor != editor);
+            .is_none_or(|state| state.editor != active_editor);
         if is_different_editor {
-            self.set_editor(editor, window, cx);
+            self.set_editor(active_editor, window, cx);
         }
     }
 
@@ -351,7 +363,9 @@ impl HighlightsTreeView {
                                             rule.style
                                                 .iter()
                                                 .find(|style_name| {
-                                                    semantic_theme.get_opt(style_name).is_some()
+                                                    semantic_theme
+                                                        .style_for_name(style_name)
+                                                        .is_some()
                                                 })
                                                 .map(|style_name| {
                                                     SharedString::from(style_name.clone())
@@ -390,11 +404,9 @@ impl HighlightsTreeView {
             let end_offset = excerpt_range.context.end.to_offset(buffer_snapshot);
             let range = start_offset..end_offset;
 
-            let captures = buffer_snapshot
-                .syntax
-                .captures(range, buffer_snapshot, |grammar| {
-                    grammar.highlights_config.as_ref().map(|c| &c.query)
-                });
+            let captures = buffer_snapshot.captures(range, |grammar| {
+                grammar.highlights_config.as_ref().map(|c| &c.query)
+            });
             let grammars: Vec<_> = captures.grammars().to_vec();
             let highlight_maps: Vec<_> = grammars.iter().map(|g| g.highlight_map()).collect();
 
