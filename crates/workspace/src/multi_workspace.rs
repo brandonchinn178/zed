@@ -56,10 +56,6 @@ pub trait Sidebar: Focusable + Render + Sized {
     /// Makes focus reset back to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 
-    /// Returns a view to render as a window-level overlay (e.g. the thread switcher).
-    fn overlay_view(&self) -> Option<AnyView> {
-        None
-    }
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -73,7 +69,6 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn entity_id(&self) -> EntityId;
 
     fn is_threads_list_view_active(&self, cx: &App) -> bool;
-    fn overlay_view(&self, cx: &App) -> Option<AnyView>;
 }
 
 #[derive(Clone)]
@@ -122,10 +117,6 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     fn is_threads_list_view_active(&self, cx: &App) -> bool {
         self.read(cx).is_threads_list_view_active()
     }
-
-    fn overlay_view(&self, cx: &App) -> Option<AnyView> {
-        self.read(cx).overlay_view()
-    }
 }
 
 pub struct MultiWorkspace {
@@ -134,6 +125,7 @@ pub struct MultiWorkspace {
     active_workspace_index: usize,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
+    sidebar_overlay: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -165,6 +157,7 @@ impl MultiWorkspace {
             active_workspace_index: 0,
             sidebar: None,
             sidebar_open: false,
+            sidebar_overlay: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _subscriptions: vec![
@@ -197,6 +190,11 @@ impl MultiWorkspace {
 
     pub fn sidebar(&self) -> Option<&dyn SidebarHandle> {
         self.sidebar.as_deref()
+    }
+
+    pub fn set_sidebar_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
+        self.sidebar_overlay = overlay;
+        cx.notify();
     }
 
     pub fn sidebar_open(&self) -> bool {
@@ -895,9 +893,8 @@ impl Render for MultiWorkspace {
                 )
                 .child(self.workspace().read(cx).modal_layer.clone())
                 .children(
-                    self.sidebar
+                    self.sidebar_overlay
                         .as_ref()
-                        .and_then(|s| s.overlay_view(cx))
                         .map(|view| {
                             deferred(
                                 div()
@@ -913,7 +910,7 @@ impl Render for MultiWorkspace {
                                             .child(
                                                 h_flex()
                                                     .occlude()
-                                                    .child(view)
+                                                    .child(view.clone())
                                                     .on_mouse_down(
                                                         MouseButton::Left,
                                                         |_, _, cx| {

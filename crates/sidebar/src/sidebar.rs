@@ -655,11 +655,6 @@ impl Sidebar {
                     .and_then(|cv| cv.read(cx).parent_id(cx))
             });
         if panel_focused.is_some() && !self.active_thread_is_draft {
-            if self.thread_switcher.is_none() {
-                if let Some(session_id) = &panel_focused {
-                    self.record_thread_access(session_id);
-                }
-            }
             self.focused_thread = panel_focused;
         }
 
@@ -2552,7 +2547,11 @@ impl Sidebar {
     fn dismiss_thread_switcher(&mut self, cx: &mut Context<Self>) {
         self.thread_switcher = None;
         self._thread_switcher_subscriptions.clear();
-        cx.notify();
+        if let Some(mw) = self.multi_workspace.upgrade() {
+            mw.update(cx, |mw, cx| {
+                mw.set_sidebar_overlay(None, cx);
+            });
+        }
     }
 
     fn toggle_thread_switcher(
@@ -2650,11 +2649,14 @@ impl Sidebar {
                                 workspace,
                                 agent.clone(),
                                 session_info.clone(),
-                                true,
+                                false,
                                 window,
                                 cx,
                             );
                             this.dismiss_thread_switcher(cx);
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.focus_panel::<AgentPanel>(window, cx);
+                            });
                         }
                         ThreadSwitcherEvent::Dismissed => {
                             if let Some(mw) = weak_multi_workspace.upgrade() {
@@ -2698,10 +2700,15 @@ impl Sidebar {
         ));
 
         let focus = thread_switcher.focus_handle(cx);
+        let overlay_view = gpui::AnyView::from(thread_switcher.clone());
         self.thread_switcher = Some(thread_switcher);
         self._thread_switcher_subscriptions = subscriptions;
+        if let Some(mw) = self.multi_workspace.upgrade() {
+            mw.update(cx, |mw, cx| {
+                mw.set_sidebar_overlay(Some(overlay_view), cx);
+            });
+        }
         window.focus(&focus, cx);
-        cx.notify();
     }
 
     fn render_thread(
@@ -3306,11 +3313,6 @@ impl WorkspaceSidebar for Sidebar {
         cx.notify();
     }
 
-    fn overlay_view(&self) -> Option<gpui::AnyView> {
-        self.thread_switcher
-            .as_ref()
-            .map(|ts| gpui::AnyView::from(ts.clone()))
-    }
 }
 
 impl Focusable for Sidebar {
