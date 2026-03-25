@@ -655,6 +655,11 @@ impl Sidebar {
                     .and_then(|cv| cv.read(cx).parent_id(cx))
             });
         if panel_focused.is_some() && !self.active_thread_is_draft {
+            if self.thread_switcher.is_none() {
+                if let Some(session_id) = &panel_focused {
+                    self.record_thread_access(session_id);
+                }
+            }
             self.focused_thread = panel_focused;
         }
 
@@ -1094,17 +1099,13 @@ impl Sidebar {
         // the build pass (no extra scan needed).
         notified_threads.retain(|id| current_session_ids.contains(id));
 
-        // Prune threads from the MRU list that are no longer live, then seed
-        // with any live threads not yet tracked (preserving sidebar order so
-        // newly-appearing threads land at the end of the MRU list).
         self.thread_access_order
             .retain(|id| current_session_ids.contains(id));
         for entry in &entries {
             if let ListEntry::Thread(thread) = entry {
-                if thread.is_live
-                    && !self
-                        .thread_access_order
-                        .contains(&thread.session_info.session_id)
+                if !self
+                    .thread_access_order
+                    .contains(&thread.session_info.session_id)
                 {
                     self.thread_access_order
                         .push(thread.session_info.session_id.clone());
