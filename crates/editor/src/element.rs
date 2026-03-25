@@ -8230,13 +8230,8 @@ pub(crate) fn render_buffer_header(
     let colors = cx.theme().colors();
 
     let header = div()
-<<<<<<< HEAD
         .id(("buffer-header", buffer_id.to_proto()))
-        .p_1()
-=======
-        .id(("buffer-header", for_excerpt.buffer_id.to_proto()))
         .p(BUFFER_HEADER_PADDING)
->>>>>>> origin/main
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
         .child(

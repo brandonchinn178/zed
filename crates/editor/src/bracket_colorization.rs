@@ -9,7 +9,7 @@ use collections::{HashMap, HashSet};
 use gpui::{AppContext as _, Context, HighlightStyle};
 use itertools::Itertools;
 use language::{BufferRow, BufferSnapshot, language_settings::LanguageSettings};
-use multi_buffer::{Anchor};
+use multi_buffer::Anchor;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 impl Editor {
@@ -25,144 +25,45 @@ impl Editor {
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
-<<<<<<< HEAD
-        let bracket_matches_by_accent = self.visible_buffer_ranges(cx).into_iter().fold(
-            HashMap::default(),
-            |mut acc, (buffer_snapshot, buffer_range)| {
-                if language_settings::language_settings(
-                    buffer_snapshot.language().map(|language| language.name()),
-                    buffer_snapshot.file(),
-                    cx,
-                )
-                .colorize_brackets
-                {
-                    let fetched_chunks = self
-                        .fetched_tree_sitter_chunks
-                        .entry(buffer_snapshot.remote_id())
-                        .or_default();
-
-                    let Some((_, excerpt)) = multi_buffer_snapshot
-                        .anchor_in_buffer(buffer_snapshot.anchor_after(buffer_range.start))
-                        .and_then(|anchor| {
-                            multi_buffer_snapshot.excerpt_containing(anchor..anchor)
-                        })
-                    else {
-                        return acc;
-                    };
-                    let context = excerpt.context.to_offset(&buffer_snapshot);
-
-                    let brackets_by_accent = buffer_snapshot
-                        .fetch_bracket_ranges(buffer_range.clone(), Some(fetched_chunks))
-                        .into_iter()
-                        .flat_map(|(chunk_range, pairs)| {
-                            if fetched_chunks.insert(chunk_range) {
-                                pairs
-                            } else {
-                                Vec::new()
-                            }
-                        })
-                        .filter_map(|pair| {
-                            let color_index = pair.color_index?;
-
-                            let buffer_open_range = if context.start <= pair.open_range.start
-                                && pair.open_range.end <= context.end
-                            {
-                                let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
-                                Some(
-                                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
-                                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
-                                )
-                            } else {
-                                None
-                            };
-
-                            let buffer_close_range = if context.start <= pair.close_range.start
-                                && pair.close_range.end <= context.end
-                            {
-                                let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
-                                Some(
-                                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
-                                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
-                                )
-                            } else {
-                                None
-                            };
-
-                            if buffer_open_range.is_none() && buffer_close_range.is_none() {
-                                None
-                            } else {
-                                Some((
-                                    color_index % accents_count,
-                                    [buffer_open_range, buffer_close_range],
-                                ))
-                            }
-                        });
-
-                    for (accent_number, new_ranges) in brackets_by_accent {
-                        let ranges = acc
-                            .entry(accent_number)
-                            .or_insert_with(Vec::<Range<Anchor>>::new);
-
-                        for new_range in new_ranges.into_iter().flatten() {
-                            let i = ranges
-                                .binary_search_by(|probe| {
-                                    probe.start.cmp(&new_range.start, &multi_buffer_snapshot)
-                                })
-                                .unwrap_or_else(|i| i);
-                            ranges.insert(i, new_range);
-                        }
-                    }
-=======
-        let visible_excerpts = self.visible_excerpts(false, cx);
-        let excerpt_data: Vec<(ExcerptId, BufferSnapshot, Range<usize>)> = visible_excerpts
+        let visible_excerpts = self.visible_excerpts(cx);
+        let excerpt_data: Vec<(BufferSnapshot, Range<usize>)> = visible_excerpts
             .into_iter()
-            .filter_map(|(excerpt_id, (buffer, _, buffer_range))| {
+            .filter_map(|(buffer, buffer_range)| {
                 let buffer = buffer.read(cx);
                 let buffer_snapshot = buffer.snapshot();
                 if LanguageSettings::for_buffer(&buffer, cx).colorize_brackets {
                     Some((excerpt_id, buffer_snapshot, buffer_range))
                 } else {
                     None
->>>>>>> origin/main
                 }
             })
             .collect();
 
         let mut fetched_tree_sitter_chunks = excerpt_data
             .iter()
-            .filter_map(|(excerpt_id, ..)| {
+            .filter_map(|(buffer_snapshot, _)| {
                 Some((
-                    *excerpt_id,
+                    buffer_snapshot.remote_id(),
                     self.bracket_fetched_tree_sitter_chunks
-                        .get(excerpt_id)
+                        .get(buffer_snapshot.remote_id())
                         .cloned()?,
                 ))
             })
-            .collect::<HashMap<ExcerptId, HashSet<Range<BufferRow>>>>();
+            .collect::<HashMap<BufferId, HashSet<Range<BufferRow>>>>();
 
         let bracket_matches_by_accent = cx.background_spawn(async move {
-            let anchors_in_multi_buffer = |current_excerpt: ExcerptId,
-                                           text_anchors: [text::Anchor; 4]|
-             -> Option<[Option<_>; 4]> {
-                multi_buffer_snapshot
-                    .anchors_in_excerpt(current_excerpt, text_anchors)?
-                    .collect_array()
-            };
-
             let bracket_matches_by_accent: HashMap<usize, Vec<Range<Anchor>>> =
                 excerpt_data.into_iter().fold(
                     HashMap::default(),
-                    |mut acc, (excerpt_id, buffer_snapshot, buffer_range)| {
+                    |mut acc, (buffer_snapshot, buffer_range)| {
                         let fetched_chunks =
-                            fetched_tree_sitter_chunks.entry(excerpt_id).or_default();
+                            fetched_tree_sitter_chunks.entry(buffer_id).or_default();
 
                         let brackets_by_accent = compute_bracket_ranges(
                             &buffer_snapshot,
                             buffer_range,
                             fetched_chunks,
-                            excerpt_id,
                             accents_count,
-                            &anchors_in_multi_buffer,
                         );
 
                         for (accent_number, new_ranges) in brackets_by_accent {
@@ -236,12 +137,10 @@ fn compute_bracket_ranges(
     buffer_snapshot: &BufferSnapshot,
     buffer_range: Range<usize>,
     fetched_chunks: &mut HashSet<Range<BufferRow>>,
-    excerpt_id: ExcerptId,
     accents_count: usize,
-    anchors_in_multi_buffer: &impl Fn(ExcerptId, [text::Anchor; 4]) -> Option<[Option<Anchor>; 4]>,
 ) -> Vec<(usize, Vec<Range<Anchor>>)> {
     buffer_snapshot
-        .fetch_bracket_ranges(buffer_range.start..buffer_range.end, Some(fetched_chunks))
+        .fetch_bracket_ranges(buffer_range.clone(), Some(fetched_chunks))
         .into_iter()
         .flat_map(|(chunk_range, pairs)| {
             if fetched_chunks.insert(chunk_range) {
@@ -253,36 +152,35 @@ fn compute_bracket_ranges(
         .filter_map(|pair| {
             let color_index = pair.color_index?;
 
-            let buffer_open_range = buffer_snapshot.anchor_range_around(pair.open_range);
-            let buffer_close_range = buffer_snapshot.anchor_range_around(pair.close_range);
-            let [
-                buffer_open_range_start,
-                buffer_open_range_end,
-                buffer_close_range_start,
-                buffer_close_range_end,
-            ] = anchors_in_multi_buffer(
-                excerpt_id,
-                [
-                    buffer_open_range.start,
-                    buffer_open_range.end,
-                    buffer_close_range.start,
-                    buffer_close_range.end,
-                ],
-            )?;
-            let multi_buffer_open_range = buffer_open_range_start.zip(buffer_open_range_end);
-            let multi_buffer_close_range = buffer_close_range_start.zip(buffer_close_range_end);
+            let buffer_open_range =
+                if context.start <= pair.open_range.start && pair.open_range.end <= context.end {
+                    let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
+                    Some(
+                        multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                            ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
+                    )
+                } else {
+                    None
+                };
 
-            let mut ranges = Vec::with_capacity(2);
-            if let Some((open_start, open_end)) = multi_buffer_open_range {
-                ranges.push(open_start..open_end);
-            }
-            if let Some((close_start, close_end)) = multi_buffer_close_range {
-                ranges.push(close_start..close_end);
-            }
-            if ranges.is_empty() {
+            let buffer_close_range =
+                if context.start <= pair.close_range.start && pair.close_range.end <= context.end {
+                    let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
+                    Some(
+                        multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                            ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
+                    )
+                } else {
+                    None
+                };
+
+            if buffer_open_range.is_none() && buffer_close_range.is_none() {
                 None
             } else {
-                Some((color_index % accents_count, ranges))
+                Some((
+                    color_index % accents_count,
+                    [buffer_open_range, buffer_close_range],
+                ))
             }
         })
         .collect()

@@ -169,20 +169,12 @@ message LiveKitConnectionInfo {
 }
 
 message ShareProject {
-<<<<<<< HEAD
-    uint64 room_id = 1;
-    repeated WorktreeMetadata worktrees = 2;
-    reserved 3;
-    bool is_ssh_project = 4;
-    optional bool windows_paths = 5;
-    repeated string quirks = 6;
-=======
   uint64 room_id = 1;
   repeated WorktreeMetadata worktrees = 2;
   reserved 3;
   bool is_ssh_project = 4;
   optional bool windows_paths = 5;
->>>>>>> origin/main
+  repeated string quirks = 6;
 }
 
 message ShareProjectResponse {
@@ -199,28 +191,10 @@ message UpdateProject {
 }
 
 message JoinProject {
-<<<<<<< HEAD
-    uint64 project_id = 1;
-    optional string committer_email = 2;
-    optional string committer_name = 3;
-    repeated string quirks = 4;
-}
-
-message JoinProjectResponse {
-    uint64 project_id = 5;
-    uint32 replica_id = 1;
-    repeated WorktreeMetadata worktrees = 2;
-    repeated Collaborator collaborators = 3;
-    repeated LanguageServer language_servers = 4;
-    repeated string language_server_capabilities = 8;
-    ChannelRole role = 6;
-    bool windows_paths = 9;
-    repeated string quirks = 10;
-    reserved 7;
-=======
   uint64 project_id = 1;
   optional string committer_email = 2;
   optional string committer_name = 3;
+  repeated string quirks = 4;
 }
 
 message JoinProjectResponse {
@@ -232,8 +206,8 @@ message JoinProjectResponse {
   repeated string language_server_capabilities = 8;
   ChannelRole role = 6;
   bool windows_paths = 9;
+  repeated string quirks = 10;
   reserved 7;
->>>>>>> origin/main
 }
 
 message LeaveProject {
@@ -378,21 +352,6 @@ message UpdateView {
     Editor editor = 3;
   }
 
-<<<<<<< HEAD
-    message Editor {
-        repeated ExcerptInsertion inserted_excerpts = 1;
-        repeated uint64 deleted_excerpts = 2;
-        repeated Selection selections = 3;
-        optional Selection pending_selection = 4;
-        EditorAnchor scroll_top_anchor = 5;
-        reserved 6;
-        reserved 7;
-        double scroll_x = 8;
-        double scroll_y = 9;
-        repeated PathExcerpts updated_paths = 10;
-        repeated uint64 deleted_buffers = 11;
-    }
-=======
   message Editor {
     repeated ExcerptInsertion inserted_excerpts = 1;
     repeated uint64 deleted_excerpts = 2;
@@ -403,8 +362,9 @@ message UpdateView {
     reserved 7;
     double scroll_x = 8;
     double scroll_y = 9;
+    repeated PathExcerpts updated_paths = 10;
+    repeated uint64 deleted_buffers = 11;
   }
->>>>>>> origin/main
 }
 
 message View {
@@ -418,21 +378,6 @@ message View {
     ContextEditor context_editor = 5;
   }
 
-<<<<<<< HEAD
-    message Editor {
-        bool singleton = 1;
-        optional string title = 2;
-        repeated Excerpt excerpts = 3;
-        repeated Selection selections = 4;
-        optional Selection pending_selection = 5;
-        EditorAnchor scroll_top_anchor = 6;
-        reserved 7;
-        reserved 8;
-        double scroll_x = 9;
-        double scroll_y = 10;
-        repeated PathExcerpts path_excerpts = 11;
-    }
-=======
   message Editor {
     bool singleton = 1;
     optional string title = 2;
@@ -444,8 +389,8 @@ message View {
     reserved 8;
     double scroll_x = 9;
     double scroll_y = 10;
+    repeated PathExcerpts path_excerpts = 11;
   }
->>>>>>> origin/main
 
   message ChannelView {
     uint64 channel_id = 1;
@@ -473,16 +418,16 @@ message Excerpt {
 }
 
 message ExcerptRange {
-    Anchor context_start = 1;
-    Anchor context_end = 2;
-    Anchor primary_start = 3;
-    Anchor primary_end = 4;
+  Anchor context_start = 1;
+  Anchor context_end = 2;
+  Anchor primary_start = 3;
+  Anchor primary_end = 4;
 }
 
 message PathExcerpts {
-    PathKey path_key = 1;
-    uint64 buffer_id = 2;
-    repeated ExcerptRange ranges = 3;
+  PathKey path_key = 1;
+  uint64 buffer_id = 2;
+  repeated ExcerptRange ranges = 3;
 }
 
 message Contact {

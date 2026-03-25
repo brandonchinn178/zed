@@ -148,17 +148,6 @@ fn conflicts_updated(
     let conflict_set = conflict_set.read(cx).snapshot();
     let multibuffer = editor.buffer().read(cx);
     let snapshot = multibuffer.snapshot(cx);
-<<<<<<< HEAD
-=======
-    let excerpts = multibuffer.excerpts_for_buffer(buffer_id, cx);
-    let Some(buffer_snapshot) = excerpts
-        .first()
-        .and_then(|(excerpt_id, _, _)| snapshot.buffer_for_excerpt(*excerpt_id))
-    else {
-        return;
-    };
-
->>>>>>> origin/main
     let old_range = maybe!({
         let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
         let buffer_conflicts = conflict_addon.buffers.get(&buffer_id)?;
@@ -193,27 +182,7 @@ fn conflicts_updated(
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
-<<<<<<< HEAD
             let Some(range) = snapshot.buffer_anchor_range_to_anchor_range(conflict_range) else {
-=======
-            let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
-                let precedes_start = range
-                    .context
-                    .start
-                    .cmp(&conflict_range.start, buffer_snapshot)
-                    .is_le();
-                let follows_end = range
-                    .context
-                    .end
-                    .cmp(&conflict_range.start, buffer_snapshot)
-                    .is_ge();
-                precedes_start && follows_end
-            }) else {
-                continue;
-            };
-            let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot.anchor_range_in_excerpt(excerpt_id, conflict_range) else {
->>>>>>> origin/main
                 continue;
             };
             removed_highlighted_ranges.push(range.clone());
@@ -239,26 +208,7 @@ fn conflicts_updated(
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
     let mut blocks = Vec::new();
     for conflict in new_conflicts {
-<<<<<<< HEAD
         update_conflict_highlighting(editor, conflict, &snapshot, cx);
-=======
-        let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
-            let precedes_start = range
-                .context
-                .start
-                .cmp(&conflict.range.start, buffer_snapshot)
-                .is_le();
-            let follows_end = range
-                .context
-                .end
-                .cmp(&conflict.range.start, buffer_snapshot)
-                .is_ge();
-            precedes_start && follows_end
-        }) else {
-            continue;
-        };
-        let excerpt_id = *excerpt_id;
->>>>>>> origin/main
 
         let Some(anchor) = snapshot.anchor_in_excerpt(conflict.range.start) else {
             continue;

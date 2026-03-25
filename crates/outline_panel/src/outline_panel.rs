@@ -1084,16 +1084,9 @@ impl OutlinePanel {
                     .map(|buffer| {
                         multi_buffer_snapshot.excerpts_for_buffer(buffer.read(cx).remote_id())
                     })
-<<<<<<< HEAD
                     .and_then(|mut excerpts| {
                         let excerpt_range = excerpts.next()?;
                         multi_buffer_snapshot.anchor_in_excerpt(excerpt_range.context.start)
-=======
-                    .and_then(|excerpts| {
-                        let (excerpt_id, _, excerpt_range) = excerpts.first()?;
-                        multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
->>>>>>> origin/main
                     })
             }
             PanelEntry::Outline(OutlineEntry::Outline(outline)) => multi_buffer_snapshot

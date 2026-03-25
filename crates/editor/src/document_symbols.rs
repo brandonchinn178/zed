@@ -79,24 +79,10 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         _cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
-<<<<<<< HEAD
         let (cursor_text_anchor, buffer) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
         let all_items = self
             .lsp_document_symbols
             .get(&cursor_text_anchor.buffer_id)?;
-=======
-        let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
-        let excerpt_id = excerpt.id();
-        let buffer_id = excerpt.buffer_id();
-        if Some(buffer_id) != cursor.text_anchor.buffer_id {
-            return None;
-        }
-        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let cursor_text_anchor = cursor.text_anchor;
-
-        let all_items = self.lsp_document_symbols.get(&buffer_id)?;
->>>>>>> origin/main
         if all_items.is_empty() {
             return None;
         }
@@ -108,8 +94,7 @@ impl Editor {
                     && item.range.end.cmp(&cursor_text_anchor, buffer).is_ge()
             })
             .filter_map(|item| {
-                let range_start =
-                    multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
+                let range_start = multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
                 let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
                 Some(OutlineItem {
                     depth: item.depth,
@@ -226,12 +211,6 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-<<<<<<< HEAD
-                        for (buffer_id, items) in &mut highlighted_results {
-                            if let Some(buffer) = editor.buffer.read(cx).buffer(*buffer_id) {
-                                let snapshot = buffer.read(cx).snapshot();
-                                apply_highlights(items, &snapshot, &display_snapshot, &syntax);
-=======
                         for items in highlighted_results.values_mut() {
                             for item in items {
                                 if let Some(highlights) =
@@ -239,7 +218,6 @@ impl Editor {
                                 {
                                     item.highlight_ranges = highlights;
                                 }
->>>>>>> origin/main
                             }
                         }
                         editor.lsp_document_symbols.extend(highlighted_results);
@@ -257,35 +235,6 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
         .lsp_enabled()
 }
 
-<<<<<<< HEAD
-/// Applies combined syntax + semantic token highlights to LSP document symbol
-/// outline items that were built without highlights by the project layer.
-fn apply_highlights(
-    items: &mut [OutlineItem<text::Anchor>],
-    buffer_snapshot: &BufferSnapshot,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
-) {
-    for item in items {
-        let symbol_range = item.range.to_offset(buffer_snapshot);
-        let selection_start = item.source_range_for_text.start.to_offset(buffer_snapshot);
-
-        if let Some(highlights) = highlights_from_buffer(
-            &item.text,
-            0,
-            buffer_snapshot,
-            display_snapshot,
-            symbol_range,
-            selection_start,
-            syntax_theme,
-        ) {
-            item.highlight_ranges = highlights;
-        }
-    }
-}
-
-=======
->>>>>>> origin/main
 /// Finds where the symbol name appears in the buffer and returns combined
 /// (tree-sitter + semantic token) highlights for those positions.
 ///
@@ -294,12 +243,6 @@ fn apply_highlights(
 /// to word-by-word matching for cases like `impl<T> Trait<T> for Type`
 /// where the LSP name doesn't appear verbatim in the buffer.
 fn highlights_from_buffer(
-<<<<<<< HEAD
-    name: &str,
-    name_offset_in_text: usize,
-    buffer_snapshot: &BufferSnapshot,
-=======
->>>>>>> origin/main
     display_snapshot: &DisplaySnapshot,
     item: &OutlineItem<text::Anchor>,
     syntax_theme: &SyntaxTheme,
@@ -331,21 +274,6 @@ fn highlights_from_buffer(
     let mut search_end = selection_point_range.end;
     search_end.column = multi_buffer_snapshot.line_len(MultiBufferRow(search_end.row));
 
-<<<<<<< HEAD
-    if search_start < search_end {
-        let buffer_text: String = buffer_snapshot
-            .text_for_range(search_start..search_end)
-            .collect();
-        if let Some(found_at) = buffer_text.find(name) {
-            let name_start_offset = search_start + found_at;
-            let name_end_offset = name_start_offset + name.len();
-            let result = highlights_for_buffer_range(
-                name_offset_in_text,
-                name_start_offset..name_end_offset,
-                buffer_snapshot,
-                display_snapshot,
-                syntax_theme,
-=======
     let search_text = multi_buffer_snapshot
         .text_for_range(search_start..search_end)
         .collect::<String>();
@@ -358,7 +286,6 @@ fn highlights_from_buffer(
             outline_text_highlights.extend(
                 display_snapshot
                     .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme),
->>>>>>> origin/main
             );
         }
         None => {
@@ -383,77 +310,11 @@ fn highlights_from_buffer(
         }
     }
 
-<<<<<<< HEAD
-    // Fallback: match word-by-word. Split the name on whitespace and find
-    // each word sequentially in the buffer's symbol range.
-    let range_start_offset = buffer_snapshot.clip_offset(range_start_offset, Bias::Right);
-    let range_end_offset = buffer_snapshot.clip_offset(range_end_offset, Bias::Left);
-
-    let mut highlights = Vec::new();
-    let mut got_any = false;
-    let buffer_text: String = buffer_snapshot
-        .text_for_range(range_start_offset..range_end_offset)
-        .collect();
-    let mut buf_search_from = 0usize;
-    let mut name_search_from = 0usize;
-    for word in name.split_whitespace() {
-        let name_word_start = name[name_search_from..]
-            .find(word)
-            .map(|pos| name_search_from + pos)
-            .unwrap_or(name_search_from);
-        if let Some(found_in_buf) = buffer_text[buf_search_from..].find(word) {
-            let buf_word_start = range_start_offset + buf_search_from + found_in_buf;
-            let buf_word_end = buf_word_start + word.len();
-            let text_cursor = name_offset_in_text + name_word_start;
-            if let Some(mut word_highlights) = highlights_for_buffer_range(
-                text_cursor,
-                buf_word_start..buf_word_end,
-                buffer_snapshot,
-                display_snapshot,
-                syntax_theme,
-            ) {
-                got_any = true;
-                highlights.append(&mut word_highlights);
-            }
-            buf_search_from = buf_search_from + found_in_buf + word.len();
-        }
-        name_search_from = name_word_start + word.len();
-    }
-
-    got_any.then_some(highlights)
-}
-
-/// Gets combined (tree-sitter + semantic token) highlights for a buffer byte
-/// range via the editor's display snapshot, then shifts the returned ranges
-/// so they start at `text_cursor_start` (the position in the outline item text).
-fn highlights_for_buffer_range(
-    text_cursor_start: usize,
-    buffer_range: Range<usize>,
-    buffer_snapshot: &BufferSnapshot,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
-) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    let raw = display_snapshot.combined_highlights(buffer_snapshot, buffer_range, syntax_theme);
-    if raw.is_empty() {
-        return None;
-    }
-    Some(
-        raw.into_iter()
-            .map(|(range, style)| {
-                (
-                    range.start + text_cursor_start..range.end + text_cursor_start,
-                    style,
-                )
-            })
-            .collect(),
-    )
-=======
     if outline_text_highlights.is_empty() {
         None
     } else {
         Some(outline_text_highlights)
     }
->>>>>>> origin/main
 }
 
 #[cfg(test)]

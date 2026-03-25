@@ -791,21 +791,13 @@ impl Editor {
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
         cx: &mut Context<Self>,
     ) {
-<<<<<<< HEAD
-        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let visible_inlay_hint_ids = self
-            .visible_inlay_hints(cx)
-            .iter()
+        let visible_inlay_hint_ids = Self::visible_inlay_hints(self.display_map.read(cx))
             .filter(|inlay| {
                 multi_buffer_snapshot
                     .anchor_to_buffer_anchor(inlay.position)
                     .map(|(anchor, _)| anchor.buffer_id)
                     == Some(buffer_id)
             })
-=======
-        let visible_inlay_hint_ids = Self::visible_inlay_hints(self.display_map.read(cx))
-            .filter(|inlay| inlay.position.text_anchor.buffer_id == Some(buffer_id))
->>>>>>> origin/main
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {

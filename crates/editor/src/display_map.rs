@@ -1900,50 +1900,12 @@ impl DisplaySnapshot {
     /// Returned ranges are 0-based relative to `buffer_range.start`.
     pub(super) fn combined_highlights(
         &self,
-<<<<<<< HEAD
-        buffer: &BufferSnapshot,
-        buffer_range: Range<usize>,
-=======
         multibuffer_range: Range<MultiBufferOffset>,
->>>>>>> origin/main
         syntax_theme: &theme::SyntaxTheme,
     ) -> Vec<(Range<usize>, HighlightStyle)> {
         let buffer_id = buffer.remote_id();
         let multibuffer = self.buffer_snapshot();
 
-<<<<<<< HEAD
-        let start_anchor = buffer.anchor_before(buffer_range.start);
-        let end_anchor = buffer.anchor_after(buffer_range.end);
-        let multibuffer_range =
-            multibuffer.buffer_anchor_range_to_anchor_range(start_anchor..end_anchor);
-
-        let Some(multibuffer_range) = multibuffer_range else {
-            // Range is outside all excerpts (e.g. symbol name not in a
-            // multi-buffer excerpt). Fall back to buffer-level syntax highlights.
-            let buffer_snapshot = multibuffer.buffer_for_id(buffer_id).cloned();
-            let Some(buffer_snapshot) = buffer_snapshot else {
-                return Vec::new();
-            };
-            let mut highlights = Vec::new();
-            let mut offset = 0usize;
-            for chunk in buffer_snapshot.chunks(buffer_range, true) {
-                let chunk_len = chunk.text.len();
-                if chunk_len == 0 {
-                    continue;
-                }
-                if let Some(style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(syntax_theme))
-                {
-                    highlights.push((offset..offset + chunk_len, style));
-                }
-                offset += chunk_len;
-            }
-            return highlights;
-        };
-
-=======
->>>>>>> origin/main
         let chunks = custom_highlights::CustomHighlightsChunks::new(
             multibuffer_range.to_offset(multibuffer),
             true,

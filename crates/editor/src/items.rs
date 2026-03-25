@@ -40,12 +40,8 @@ use std::{
 };
 use text::{BufferId, BufferSnapshot, Selection};
 use ui::{IconDecorationKind, prelude::*};
-<<<<<<< HEAD
-use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
-=======
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
->>>>>>> origin/main
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,

@@ -1155,39 +1155,7 @@ impl SplittableEditor {
                 let diff_snapshot = diff.read(cx).snapshot(cx);
                 let base_text_buffer_snapshot = base_text_buffer.read(cx).snapshot();
 
-<<<<<<< HEAD
                 let mut paired_ranges: Vec<(Range<Point>, ExcerptRange<text::Anchor>)> = Vec::new();
-=======
-                let lhs_ranges: Vec<ExcerptRange<Point>> = rhs_multibuffer
-                    .excerpts_for_buffer(main_buffer_snapshot.remote_id(), cx)
-                    .into_iter()
-                    .filter(|(id, _, _)| rhs_excerpt_ids.contains(id))
-                    .map(|(_, _, excerpt_range)| {
-                        let to_base_text = |range: Range<Point>| {
-                            let start = diff_snapshot
-                                .buffer_point_to_base_text_range(
-                                    Point::new(range.start.row, 0),
-                                    &main_buffer_snapshot,
-                                )
-                                .start;
-                            let end = diff_snapshot
-                                .buffer_point_to_base_text_range(
-                                    Point::new(range.end.row, 0),
-                                    &main_buffer_snapshot,
-                                )
-                                .end;
-                            let end_column = diff_snapshot.base_text().line_len(end.row);
-                            Point::new(start.row, 0)..Point::new(end.row, end_column)
-                        };
-                        let primary = excerpt_range.primary.to_point(&main_buffer_snapshot);
-                        let context = excerpt_range.context.to_point(&main_buffer_snapshot);
-                        ExcerptRange {
-                            primary: to_base_text(primary),
-                            context: to_base_text(context),
-                        }
-                    })
-                    .collect();
->>>>>>> origin/main
 
                 let mut have_excerpt = false;
                 let mut did_merge = false;

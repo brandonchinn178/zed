@@ -1402,7 +1402,6 @@ impl MessageEditor {
                     });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
-                        excerpt_id,
                         text_anchor,
                         content_len,
                         mention_uri.name().into(),

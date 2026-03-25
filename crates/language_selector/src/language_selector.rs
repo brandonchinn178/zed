@@ -578,7 +578,6 @@ mod tests {
 
         assert_selected_language_for_editor(&workspace, &rust_editor, Some("Rust"), cx);
         assert_selected_language_for_editor(&workspace, &typescript_editor, Some("TypeScript"), cx);
-<<<<<<< HEAD
         // Ensure the empty editor's buffer has no language before asserting
         let buffer = empty_editor.read_with(cx, |editor, cx| {
             editor
@@ -588,8 +587,6 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.set_language(None, cx);
         });
-=======
->>>>>>> origin/main
         assert_selected_language_for_editor(&workspace, &empty_editor, None, cx);
     }
 

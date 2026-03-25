@@ -96,13 +96,7 @@ impl GoToLine {
                 .snapshot(cx)
                 .excerpts_for_buffer(snapshot.remote_id())
                 .into_iter()
-<<<<<<< HEAD
                 .map(move |range| text::ToPoint::to_point(&range.context.end, &snapshot).row)
-=======
-                .map(move |(_, _, range)| {
-                    text::ToPoint::to_point(&range.context.end, &snapshot).row
-                })
->>>>>>> origin/main
                 .max()
                 .unwrap_or(0);
 
