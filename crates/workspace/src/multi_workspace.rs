@@ -55,7 +55,6 @@ pub trait Sidebar: Focusable + Render + Sized {
     }
     /// Makes focus reset back to the search editor upon toggling the sidebar from outside
     fn prepare_for_focus(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
-
 }
 
 pub trait SidebarHandle: 'static + Send + Sync {
@@ -861,11 +860,9 @@ impl Render for MultiWorkspace {
                     .when_some(
                         self.sidebar.as_ref().map(|s| s.focus_handle(cx)),
                         |this, sidebar_focus| {
-                            this.on_action(
-                                move |action: &ToggleThreadSwitcher, window, cx| {
-                                    sidebar_focus.dispatch_action(action, window, cx);
-                                },
-                            )
+                            this.on_action(move |action: &ToggleThreadSwitcher, window, cx| {
+                                sidebar_focus.dispatch_action(action, window, cx);
+                            })
                         },
                     )
                 })
@@ -892,37 +889,19 @@ impl Render for MultiWorkspace {
                         .child(self.workspace().clone()),
                 )
                 .child(self.workspace().read(cx).modal_layer.clone())
-                .children(
-                    self.sidebar_overlay
-                        .as_ref()
-                        .map(|view| {
-                            deferred(
-                                div()
-                                    .absolute()
-                                    .size_full()
-                                    .inset_0()
-                                    .occlude()
-                                    .child(
-                                        v_flex()
-                                            .h(px(0.0))
-                                            .top_20()
-                                            .items_center()
-                                            .child(
-                                                h_flex()
-                                                    .occlude()
-                                                    .child(view.clone())
-                                                    .on_mouse_down(
-                                                        MouseButton::Left,
-                                                        |_, _, cx| {
-                                                            cx.stop_propagation();
-                                                        },
-                                                    ),
-                                            ),
-                                    ),
-                            )
-                            .with_priority(2)
-                        }),
-                ),
+                .children(self.sidebar_overlay.as_ref().map(|view| {
+                    deferred(div().absolute().size_full().inset_0().occlude().child(
+                        v_flex().h(px(0.0)).top_20().items_center().child(
+                            h_flex().occlude().child(view.clone()).on_mouse_down(
+                                MouseButton::Left,
+                                |_, _, cx| {
+                                    cx.stop_propagation();
+                                },
+                            ),
+                        ),
+                    ))
+                    .with_priority(2)
+                })),
             window,
             cx,
             Tiling {

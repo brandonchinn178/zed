@@ -47,7 +47,7 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
 
-use crate::thread_switcher::{ThreadSwitcher, ThreadSwitcherEvent, ThreadSwitcherEntry};
+use crate::thread_switcher::{ThreadSwitcher, ThreadSwitcherEntry, ThreadSwitcherEvent};
 
 gpui::actions!(
     agents_sidebar,
@@ -2084,7 +2084,14 @@ impl Sidebar {
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
                 multi_workspace.activate(workspace.clone(), cx);
-                Self::load_agent_thread_in_workspace(&workspace, agent, session_info, true, window, cx);
+                Self::load_agent_thread_in_workspace(
+                    &workspace,
+                    agent,
+                    session_info,
+                    true,
+                    window,
+                    cx,
+                );
             })
             .log_err()
             .is_some();
@@ -2498,8 +2505,7 @@ impl Sidebar {
     }
 
     fn record_thread_access(&mut self, session_id: &acp::SessionId) {
-        self.thread_access_order
-            .retain(|id| id != session_id);
+        self.thread_access_order.retain(|id| id != session_id);
         self.thread_access_order.insert(0, session_id.clone());
     }
 
@@ -2579,117 +2585,108 @@ impl Sidebar {
         let select_last = action.select_last;
         let weak_multi_workspace = self.multi_workspace.clone();
 
-        let original_agent = self.focused_thread.as_ref().and_then(|focused_id| {
-            entries.iter().find(|e| &e.session_id == focused_id)
-        }).map(|e| e.agent.clone());
-        let original_session_info = self.focused_thread.as_ref().and_then(|focused_id| {
-            entries.iter().find(|e| &e.session_id == focused_id)
-        }).map(|e| e.session_info.clone());
-        let original_workspace = self.multi_workspace.upgrade()
+        let original_agent = self
+            .focused_thread
+            .as_ref()
+            .and_then(|focused_id| entries.iter().find(|e| &e.session_id == focused_id))
+            .map(|e| e.agent.clone());
+        let original_session_info = self
+            .focused_thread
+            .as_ref()
+            .and_then(|focused_id| entries.iter().find(|e| &e.session_id == focused_id))
+            .map(|e| e.session_info.clone());
+        let original_workspace = self
+            .multi_workspace
+            .upgrade()
             .map(|mw| mw.read(cx).workspace().clone());
 
-        let thread_switcher = cx.new(|cx| {
-            ThreadSwitcher::new(entries, select_last, window, cx)
-        });
+        let thread_switcher = cx.new(|cx| ThreadSwitcher::new(entries, select_last, window, cx));
 
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.subscribe_in(
-            &thread_switcher,
-            window,
-            {
-                let original_agent = original_agent.clone();
-                let original_session_info = original_session_info.clone();
-                let original_workspace = original_workspace.clone();
-                let weak_multi_workspace = weak_multi_workspace.clone();
-                let thread_switcher = thread_switcher.clone();
-                move |this, _emitter, event: &ThreadSwitcherEvent, window, cx| {
-                    match event {
-                        ThreadSwitcherEvent::Preview {
-                            agent,
-                            session_info,
-                            workspace,
-                        } => {
-                            if let Some(mw) = weak_multi_workspace.upgrade() {
-                                mw.update(cx, |mw, cx| {
-                                    mw.activate(workspace.clone(), cx);
-                                });
-                            }
-                            this.focused_thread =
-                                Some(session_info.session_id.clone());
-                            this.update_entries(cx);
-                            Self::load_agent_thread_in_workspace(
-                                workspace,
-                                agent.clone(),
-                                session_info.clone(),
-                                false,
-                                window,
-                                cx,
-                            );
-                            let focus = thread_switcher.focus_handle(cx);
-                            window.focus(&focus, cx);
-                        }
-                        ThreadSwitcherEvent::Confirmed {
-                            agent,
-                            session_info,
-                            workspace,
-                        } => {
-                            if let Some(mw) = weak_multi_workspace.upgrade() {
-                                mw.update(cx, |mw, cx| {
-                                    mw.activate(workspace.clone(), cx);
-                                });
-                            }
-                            this.record_thread_access(
-                                &session_info.session_id,
-                            );
-                            this.focused_thread =
-                                Some(session_info.session_id.clone());
-                            this.update_entries(cx);
-                            Self::load_agent_thread_in_workspace(
-                                workspace,
-                                agent.clone(),
-                                session_info.clone(),
-                                false,
-                                window,
-                                cx,
-                            );
-                            this.dismiss_thread_switcher(cx);
-                            workspace.update(cx, |workspace, cx| {
-                                workspace.focus_panel::<AgentPanel>(window, cx);
+        subscriptions.push(cx.subscribe_in(&thread_switcher, window, {
+            let original_agent = original_agent.clone();
+            let original_session_info = original_session_info.clone();
+            let original_workspace = original_workspace.clone();
+            let weak_multi_workspace = weak_multi_workspace.clone();
+            let thread_switcher = thread_switcher.clone();
+            move |this, _emitter, event: &ThreadSwitcherEvent, window, cx| match event {
+                ThreadSwitcherEvent::Preview {
+                    agent,
+                    session_info,
+                    workspace,
+                } => {
+                    if let Some(mw) = weak_multi_workspace.upgrade() {
+                        mw.update(cx, |mw, cx| {
+                            mw.activate(workspace.clone(), cx);
+                        });
+                    }
+                    this.focused_thread = Some(session_info.session_id.clone());
+                    this.update_entries(cx);
+                    Self::load_agent_thread_in_workspace(
+                        workspace,
+                        agent.clone(),
+                        session_info.clone(),
+                        false,
+                        window,
+                        cx,
+                    );
+                    let focus = thread_switcher.focus_handle(cx);
+                    window.focus(&focus, cx);
+                }
+                ThreadSwitcherEvent::Confirmed {
+                    agent,
+                    session_info,
+                    workspace,
+                } => {
+                    if let Some(mw) = weak_multi_workspace.upgrade() {
+                        mw.update(cx, |mw, cx| {
+                            mw.activate(workspace.clone(), cx);
+                        });
+                    }
+                    this.record_thread_access(&session_info.session_id);
+                    this.focused_thread = Some(session_info.session_id.clone());
+                    this.update_entries(cx);
+                    Self::load_agent_thread_in_workspace(
+                        workspace,
+                        agent.clone(),
+                        session_info.clone(),
+                        false,
+                        window,
+                        cx,
+                    );
+                    this.dismiss_thread_switcher(cx);
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                    });
+                }
+                ThreadSwitcherEvent::Dismissed => {
+                    if let Some(mw) = weak_multi_workspace.upgrade() {
+                        if let Some(original_ws) = &original_workspace {
+                            mw.update(cx, |mw, cx| {
+                                mw.activate(original_ws.clone(), cx);
                             });
                         }
-                        ThreadSwitcherEvent::Dismissed => {
-                            if let Some(mw) = weak_multi_workspace.upgrade() {
-                                if let Some(original_ws) = &original_workspace {
-                                    mw.update(cx, |mw, cx| {
-                                        mw.activate(original_ws.clone(), cx);
-                                    });
-                                }
-                            }
-                            if let Some(session_info) = &original_session_info {
-                                this.focused_thread =
-                                    Some(session_info.session_id.clone());
-                                this.update_entries(cx);
-                                let agent = original_agent
-                                    .clone()
-                                    .unwrap_or(Agent::NativeAgent);
-                                if let Some(original_ws) = &original_workspace {
-                                    Self::load_agent_thread_in_workspace(
-                                        original_ws,
-                                        agent,
-                                        session_info.clone(),
-                                        false,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }
-                            this.dismiss_thread_switcher(cx);
+                    }
+                    if let Some(session_info) = &original_session_info {
+                        this.focused_thread = Some(session_info.session_id.clone());
+                        this.update_entries(cx);
+                        let agent = original_agent.clone().unwrap_or(Agent::NativeAgent);
+                        if let Some(original_ws) = &original_workspace {
+                            Self::load_agent_thread_in_workspace(
+                                original_ws,
+                                agent,
+                                session_info.clone(),
+                                false,
+                                window,
+                                cx,
+                            );
                         }
                     }
+                    this.dismiss_thread_switcher(cx);
                 }
-            },
-        ));
+            }
+        }));
 
         subscriptions.push(cx.subscribe_in(
             &thread_switcher,
@@ -3312,7 +3309,6 @@ impl WorkspaceSidebar for Sidebar {
         self.selection = None;
         cx.notify();
     }
-
 }
 
 impl Focusable for Sidebar {
