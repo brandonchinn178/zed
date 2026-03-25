@@ -30,17 +30,26 @@ impl PathCanonicalizer {
         }
     }
 
-    fn add_snapshot_mapping(&mut self, snapshot: &RepositorySnapshot) {
-        let old = self.directory_mappings.insert(
-            PathBuf::from(snapshot.work_directory_abs_path.as_ref()),
-            PathBuf::from(snapshot.original_repo_abs_path.as_ref()),
-        );
+    fn add_mapping(&mut self, work_directory: &Path, original_repo: &Path) {
+        let old = self
+            .directory_mappings
+            .insert(PathBuf::from(work_directory), PathBuf::from(original_repo));
         if let Some(old) = old {
             debug_assert_eq!(
-                old.as_path(),
-                snapshot.original_repo_abs_path.as_ref(),
+                &old, original_repo,
                 "all worktrees should map to the same main worktree"
             );
+        }
+    }
+
+    fn add_snapshot_mapping(&mut self, snapshot: &RepositorySnapshot) {
+        self.add_mapping(
+            &snapshot.work_directory_abs_path,
+            &snapshot.original_repo_abs_path,
+        );
+
+        for worktree in snapshot.linked_worktrees.iter() {
+            self.add_mapping(&worktree.path, &snapshot.original_repo_abs_path);
         }
     }
 
@@ -48,8 +57,6 @@ impl PathCanonicalizer {
         for (_, repo) in workspace.project().read(cx).repositories(cx) {
             let snapshot = repo.read(cx).snapshot();
             self.add_snapshot_mapping(&snapshot);
-
-            // TODO: Also add mappings for any known linked worktrees.
         }
     }
 
