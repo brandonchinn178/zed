@@ -346,7 +346,7 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
                     boundary.row,
                     boundary
                         .next
-                        .buffer
+                        .buffer(snapshot)
                         .text_for_range(boundary.next.range.context)
                         .collect::<String>(),
                     starts_new_buffer,

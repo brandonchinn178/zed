@@ -680,7 +680,6 @@ impl std::hash::Hash for DiffTransformHunkInfo {
 
 #[derive(Clone)]
 pub struct ExcerptBoundaryInfo {
-    pub buffer: BufferSnapshot,
     pub start_anchor: Anchor,
     pub range: ExcerptRange<text::Anchor>,
     pub end_row: MultiBufferRow,
@@ -693,13 +692,17 @@ impl ExcerptBoundaryInfo {
     pub fn buffer_id(&self) -> BufferId {
         self.start_text_anchor().buffer_id
     }
+    pub fn buffer<'a>(&self, snapshot: &'a MultiBufferSnapshot) -> &'a BufferSnapshot {
+        snapshot
+            .buffer_for_id(self.buffer_id())
+            .expect("buffer snapshot not found for excerpt boundary")
+    }
 }
 
 impl std::fmt::Debug for ExcerptBoundaryInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct(type_name::<Self>())
-            .field("buffer_id", &self.buffer.remote_id())
-            .field("path", &self.buffer.file().map(|f| f.path()))
+            .field("buffer_id", &self.buffer_id())
             .field("range", &self.range)
             .finish()
     }
@@ -726,7 +729,7 @@ impl ExcerptBoundary {
     pub fn starts_new_buffer(&self) -> bool {
         match (self.prev.as_ref(), &self.next) {
             (None, _) => true,
-            (Some(prev), next) => prev.buffer.remote_id() != next.buffer.remote_id(),
+            (Some(prev), next) => prev.buffer_id() != next.buffer_id(),
         }
     }
 }
@@ -5415,7 +5418,6 @@ impl MultiBufferSnapshot {
                         excerpt.path_key_index,
                         excerpt.range.context.start,
                     ),
-                    buffer: excerpt.buffer_snapshot(self).clone(),
                     range: excerpt.range.clone(),
                     end_row: MultiBufferRow(next_region_start.row),
                 });
@@ -5425,7 +5427,6 @@ impl MultiBufferSnapshot {
                         next_excerpt.path_key_index,
                         next_excerpt.range.context.start,
                     ),
-                    buffer: next_excerpt.buffer_snapshot(self).clone(),
                     range: next_excerpt.range.clone(),
                     end_row: if next_excerpt.has_trailing_newline {
                         MultiBufferRow(next_region_end.row - 1)

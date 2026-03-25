@@ -895,6 +895,7 @@ pub trait Addon: 'static {
     fn render_buffer_header_controls(
         &self,
         _: &ExcerptBoundaryInfo,
+        _: &language::BufferSnapshot,
         _: &Window,
         _: &App,
     ) -> Option<AnyElement> {

@@ -8128,43 +8128,20 @@ pub(crate) fn header_jump_data(
     first_excerpt: &ExcerptBoundaryInfo,
     latest_selection_anchors: &HashMap<BufferId, Anchor>,
 ) -> JumpData {
-    let jump_target = if let Some(anchor) =
-        latest_selection_anchors.get(&first_excerpt.buffer.remote_id())
-        && let Some((jump_anchor, _)) = editor_snapshot
-            .buffer_snapshot()
-            .anchor_to_buffer_anchor(*anchor)
+    let multibuffer_snapshot = editor_snapshot.buffer_snapshot();
+    let buffer = first_excerpt.buffer(multibuffer_snapshot);
+    let (jump_anchor, jump_buffer) = if let Some(anchor) =
+        latest_selection_anchors.get(&first_excerpt.buffer_id())
+        && let Some((jump_anchor, selection_buffer)) =
+            multibuffer_snapshot.anchor_to_buffer_anchor(*anchor)
     {
-        JumpTargetInExcerptInput {
-            buffer: &first_excerpt.buffer,
-            excerpt_start_anchor: first_excerpt.range.context.start,
-            jump_anchor,
-        }
+        (jump_anchor, selection_buffer)
     } else {
-        JumpTargetInExcerptInput {
-            buffer: &first_excerpt.buffer,
-            excerpt_start_anchor: first_excerpt.range.context.start,
-            jump_anchor: first_excerpt.range.primary.start,
-        }
+        (first_excerpt.range.primary.start, buffer)
     };
-    header_jump_data_inner(editor_snapshot, block_row_start, height, &jump_target)
-}
-
-struct JumpTargetInExcerptInput<'a> {
-    buffer: &'a language::BufferSnapshot,
-    excerpt_start_anchor: text::Anchor,
-    jump_anchor: text::Anchor,
-}
-
-fn header_jump_data_inner(
-    snapshot: &EditorSnapshot,
-    block_row_start: DisplayRow,
-    height: u32,
-    for_excerpt: &JumpTargetInExcerptInput,
-) -> JumpData {
-    let buffer = &for_excerpt.buffer;
-    let jump_position = language::ToPoint::to_point(&for_excerpt.jump_anchor, buffer);
-    let excerpt_start = for_excerpt.excerpt_start_anchor;
-    let rows_from_excerpt_start = if for_excerpt.jump_anchor == excerpt_start {
+    let excerpt_start = first_excerpt.range.context.start;
+    let jump_position = language::ToPoint::to_point(&jump_anchor, jump_buffer);
+    let rows_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
         let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
@@ -8173,14 +8150,14 @@ fn header_jump_data_inner(
 
     let line_offset_from_top = (block_row_start.0 + height + rows_from_excerpt_start)
         .saturating_sub(
-            snapshot
+            editor_snapshot
                 .scroll_anchor
-                .scroll_position(&snapshot.display_snapshot)
+                .scroll_position(&editor_snapshot.display_snapshot)
                 .y as u32,
         );
 
     JumpData::MultiBufferPoint {
-        anchor: for_excerpt.jump_anchor,
+        anchor: jump_anchor,
         position: jump_position,
         line_offset_from_top,
     }
@@ -8200,6 +8177,8 @@ pub(crate) fn render_buffer_header(
     let multi_buffer = editor_read.buffer.read(cx);
     let is_read_only = editor_read.read_only(cx);
     let editor_handle: &dyn ItemHandle = editor;
+    let multibuffer_snapshot = multi_buffer.snapshot(cx);
+    let buffer = for_excerpt.buffer(&multibuffer_snapshot);
 
     let breadcrumbs = if is_selected {
         editor_read.breadcrumbs_inner(cx)
@@ -8207,31 +8186,30 @@ pub(crate) fn render_buffer_header(
         None
     };
 
+    let buffer_id = for_excerpt.buffer_id();
     let file_status = multi_buffer
         .all_diff_hunks_expanded()
-        .then(|| editor_read.status_for_buffer_id(for_excerpt.buffer.remote_id(), cx))
+        .then(|| editor_read.status_for_buffer_id(buffer_id, cx))
         .flatten();
-    let indicator = multi_buffer
-        .buffer(for_excerpt.buffer.remote_id())
-        .and_then(|buffer| {
-            let buffer = buffer.read(cx);
-            let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
-                (true, _) => Some(Color::Warning),
-                (_, true) => Some(Color::Accent),
-                (false, false) => None,
-            };
-            indicator_color.map(|indicator_color| Indicator::dot().color(indicator_color))
-        });
+    let indicator = multi_buffer.buffer(buffer_id).and_then(|buffer| {
+        let buffer = buffer.read(cx);
+        let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
+            (true, _) => Some(Color::Warning),
+            (_, true) => Some(Color::Accent),
+            (false, false) => None,
+        };
+        indicator_color.map(|indicator_color| Indicator::dot().color(indicator_color))
+    });
 
     let include_root = editor_read
         .project
         .as_ref()
         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
         .unwrap_or_default();
-    let file = for_excerpt.buffer.file();
+    let file = buffer.file();
     let can_open_excerpts = file.is_none_or(|file| file.can_open());
     let path_style = file.map(|file| file.path_style(cx));
-    let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
+    let relative_path = buffer.resolve_file_path(include_root, cx);
     let (parent_path, filename) = if let Some(path) = &relative_path {
         if let Some(path_style) = path_style {
             let (dir, file_name) = path_style.split(path);
@@ -8246,7 +8224,7 @@ pub(crate) fn render_buffer_header(
     let colors = cx.theme().colors();
 
     let header = div()
-        .id(("buffer-header", for_excerpt.buffer.remote_id().to_proto()))
+        .id(("buffer-header", buffer_id.to_proto()))
         .p_1()
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
@@ -8274,7 +8252,7 @@ pub(crate) fn render_buffer_header(
                 .hover(|style| style.bg(colors.element_hover))
                 .map(|header| {
                     let editor = editor.clone();
-                    let buffer_id = for_excerpt.buffer.remote_id();
+                    let buffer_id = for_excerpt.buffer_id();
                     let toggle_chevron_icon =
                         FileIcons::get_chevron_icon(!is_folded, cx).map(Icon::from_path);
                     let button_size = rems_from_px(28.);
@@ -8338,7 +8316,7 @@ pub(crate) fn render_buffer_header(
                         .addons
                         .values()
                         .filter_map(|addon| {
-                            addon.render_buffer_header_controls(for_excerpt, window, cx)
+                            addon.render_buffer_header_controls(for_excerpt, buffer, window, cx)
                         })
                         .take(1),
                 )
@@ -8431,7 +8409,7 @@ pub(crate) fn render_buffer_header(
                                                 ),
                                         )
                                     })
-                                    .when(!for_excerpt.buffer.capability.editable(), |el| {
+                                    .when(!buffer.capability.editable(), |el| {
                                         el.child(Icon::new(IconName::FileLock).color(Color::Muted))
                                     })
                                     .when_some(breadcrumbs, |then, breadcrumbs| {
@@ -8500,7 +8478,7 @@ pub(crate) fn render_buffer_header(
                 ),
         );
 
-    let file = for_excerpt.buffer.file().cloned();
+    let file = buffer.file().cloned();
     let editor = editor.clone();
 
     right_click_menu("buffer-header-context-menu")
