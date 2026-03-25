@@ -45,6 +45,8 @@ use zed_actions::editor::{MoveDown, MoveUp};
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
 
+mod canonical_paths;
+
 gpui::actions!(
     agents_sidebar,
     [
