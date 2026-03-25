@@ -2,7 +2,8 @@
 mod syntax_map_tests;
 
 use crate::{
-    Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
+    Buffer, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+    with_parser,
 };
 use collections::HashMap;
 use futures::FutureExt;
@@ -56,7 +57,15 @@ impl Drop for SyntaxSnapshot {
         // This does allocate a new Arc, but it's cheap and avoids blocking the main thread without needing to use an `Option` or `MaybeUninit`.
         let _ = DROP_TX.send(std::mem::replace(
             &mut self.layers,
-            SumTree::from_summary(Default::default()),
+            SumTree::from_summary(SyntaxLayerSummary {
+                min_depth: Default::default(),
+                max_depth: Default::default(),
+                // Deliberately bogus anchors, doesn't matter in this context
+                range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
+                last_layer_range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
+                last_layer_language: Default::default(),
+                contains_unknown_injections: Default::default(),
+            }),
         ));
     }
 }

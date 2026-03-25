@@ -1673,7 +1673,7 @@ impl EditPredictionStore {
             buffer.pending_predictions.push(PendingSettledPrediction {
                 request_id: request_id,
                 editable_anchor_range: edited_buffer_snapshot
-                    .anchor_range_around(editable_offset_range),
+                    .anchor_range_inside(editable_offset_range),
                 example,
                 e2e_latency,
                 enqueued_at: now,
@@ -2764,7 +2764,7 @@ fn collaborator_edit_overlaps_locality_region(
         (position..position).to_point(snapshot),
         COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS,
     );
-    let locality_anchor_range = snapshot.anchor_range_around(locality_point_range);
+    let locality_anchor_range = snapshot.anchor_range_inside(locality_point_range);
 
     edit_range.overlaps(&locality_anchor_range, snapshot)
 }

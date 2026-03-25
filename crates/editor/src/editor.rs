@@ -5958,7 +5958,8 @@ impl Editor {
 
     pub fn visible_buffers(&self, cx: &mut Context<Editor>) -> Vec<Entity<Buffer>> {
         let project = self.project().cloned();
-        let visible_range = self.multi_buffer_visible_range(cx);
+        let display_snapshot = self.display_snapshot(cx);
+        let visible_range = self.multi_buffer_visible_range(&display_snapshot, cx);
         let multi_buffer = self.buffer().read(cx);
         multi_buffer_snapshot
             .range_to_buffer_ranges(visible_range)
@@ -5972,7 +5973,9 @@ impl Editor {
         &self,
         cx: &mut Context<Editor>,
     ) -> Vec<(BufferSnapshot, Range<usize>)> {
-        let (visible_range, multi_buffer_snapshot) = self.multi_buffer_visible_range(cx);
+        let display_snapshot = self.display_snapshot(cx);
+        let (visible_range, multi_buffer_snapshot) =
+            self.multi_buffer_visible_range(&display_snapshot, cx);
         multi_buffer_snapshot
             .range_to_buffer_ranges(visible_range)
             .into_iter()
@@ -18553,7 +18556,7 @@ impl Editor {
         let editor_snapshot = self.snapshot(window, cx);
 
         // We don't care about multi-buffer symbols
-        let Some((excerpt_id, _, _)) = editor_snapshot.as_singleton() else {
+        let Some(buffer_snapshot) = editor_snapshot.as_singleton() else {
             return Task::ready(Ok(()));
         };
 
@@ -18575,7 +18578,11 @@ impl Editor {
 
             let multi_snapshot = editor_snapshot.buffer();
             let buffer_range = |range: &Range<_>| {
-                Anchor::range_in_buffer(excerpt_id, range.clone()).to_offset(multi_snapshot)
+                Some(
+                    multi_snapshot
+                        .buffer_anchor_range_to_anchor_range(range)?
+                        .to_offset(multi_snapshot),
+                )
             };
 
             wcx.update_window(wcx.window_handle(), |_, window, acx| {
@@ -18584,7 +18591,7 @@ impl Editor {
                     .enumerate()
                     .filter_map(|(idx, item)| {
                         // Find the closest outline item by distance between outline text and cursor location
-                        let source_range = buffer_range(&item.source_range_for_text);
+                        let source_range = buffer_range(&item.source_range_for_text)?;
                         let distance_to_closest_endpoint = cmp::min(
                             (source_range.start.0 as isize - cursor_offset.0 as isize).abs(),
                             (source_range.end.0 as isize - cursor_offset.0 as isize).abs(),
@@ -18609,7 +18616,9 @@ impl Editor {
                     return;
                 };
 
-                let range = buffer_range(&outline_items[idx].source_range_for_text);
+                let Some(range) = buffer_range(&outline_items[idx].source_range_for_text) else {
+                    return;
+                };
                 let selection = [range.start..range.start];
 
                 let _ = editor
@@ -24218,7 +24227,6 @@ impl Editor {
                 ranges,
                 path_key,
             } => {
-                self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()

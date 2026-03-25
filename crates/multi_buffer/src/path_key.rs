@@ -606,6 +606,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.emit(Event::BufferRangesUpdated {
             buffer,
@@ -689,6 +690,7 @@ impl MultiBuffer {
 
         cx.emit(Event::Edited {
             edited_buffer: None,
+            is_local: true,
         });
         cx.notify();
     }

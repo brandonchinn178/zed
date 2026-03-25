@@ -10,6 +10,7 @@ use gpui::{AppContext as _, Context, HighlightStyle};
 use itertools::Itertools;
 use language::{BufferRow, BufferSnapshot, language_settings::LanguageSettings};
 use multi_buffer::Anchor;
+use text::BufferId;
 use ui::{ActiveTheme, utils::ensure_minimum_contrast};
 
 impl Editor {
@@ -25,17 +26,15 @@ impl Editor {
         let accents_count = cx.theme().accents().0.len();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
-        let visible_excerpts = self.visible_excerpts(cx);
+        let visible_excerpts = self.visible_buffer_ranges(cx);
         let excerpt_data: Vec<(BufferSnapshot, Range<usize>)> = visible_excerpts
             .into_iter()
-            .filter_map(|(buffer, buffer_range)| {
-                let buffer = buffer.read(cx);
-                let buffer_snapshot = buffer.snapshot();
-                if LanguageSettings::for_buffer(&buffer, cx).colorize_brackets {
-                    Some((excerpt_id, buffer_snapshot, buffer_range))
-                } else {
-                    None
-                }
+            .filter(|(buffer_snapshot, buffer_range)| {
+                let Some(buffer) = self.buffer().read(cx).buffer(buffer_snapshot.remote_id())
+                else {
+                    return false;
+                };
+                LanguageSettings::for_buffer(buffer.read(cx), cx).colorize_brackets
             })
             .collect();
 
@@ -45,7 +44,7 @@ impl Editor {
                 Some((
                     buffer_snapshot.remote_id(),
                     self.bracket_fetched_tree_sitter_chunks
-                        .get(buffer_snapshot.remote_id())
+                        .get(&buffer_snapshot.remote_id())
                         .cloned()?,
                 ))
             })
@@ -56,12 +55,14 @@ impl Editor {
                 excerpt_data.into_iter().fold(
                     HashMap::default(),
                     |mut acc, (buffer_snapshot, buffer_range)| {
-                        let fetched_chunks =
-                            fetched_tree_sitter_chunks.entry(buffer_id).or_default();
+                        let fetched_chunks = fetched_tree_sitter_chunks
+                            .entry(buffer_snapshot.remote_id())
+                            .or_default();
 
                         let brackets_by_accent = compute_bracket_ranges(
                             &buffer_snapshot,
                             buffer_range,
+                            excerpt_range,
                             fetched_chunks,
                             accents_count,
                         );
@@ -136,6 +137,7 @@ impl Editor {
 fn compute_bracket_ranges(
     buffer_snapshot: &BufferSnapshot,
     buffer_range: Range<usize>,
+    excerpt_range: ExcerptRange<usize>,
     fetched_chunks: &mut HashSet<Range<BufferRow>>,
     accents_count: usize,
 ) -> Vec<(usize, Vec<Range<Anchor>>)> {

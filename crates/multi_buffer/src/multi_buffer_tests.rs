@@ -77,22 +77,19 @@ fn test_buffer_point_to_anchor_at_end_of_singleton_buffer(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local("abc", cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-    let excerpt_id = multibuffer
-        .read(cx)
-        .excerpt_ids()
-        .into_iter()
-        .next()
-        .unwrap();
     let anchor = multibuffer
         .read(cx)
-        .buffer_point_to_anchor(&buffer, Point::new(0, 3), cx);
+        .buffer_point_to_anchor(&buffer, Point::new(0, 3), cx)
+        .unwrap();
+    let (anchor, _) = multibuffer
+        .read(cx)
+        .snapshot(cx)
+        .anchor_to_buffer_anchor(anchor)
+        .unwrap();
 
     assert_eq!(
         anchor,
-        Some(Anchor::in_buffer(
-            excerpt_id,
-            buffer.read(cx).snapshot().anchor_after(Point::new(0, 3)),
-        ))
+        buffer.read(cx).snapshot().anchor_after(Point::new(0, 3)),
     );
 }
 
