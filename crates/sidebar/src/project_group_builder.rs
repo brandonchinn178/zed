@@ -11,22 +11,87 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
-use gpui::App;
+use gpui::{App, Entity};
 use project::git_store::RepositorySnapshot;
-use workspace::{PathList, Workspace};
+use ui::SharedString;
+use workspace::{MultiWorkspace, PathList, Workspace};
 
-pub struct PathCanonicalizer {
-    /// Maps git repositories' work_directory_abs_path to their original_repo_abs_path
-    directory_mappings: HashMap<PathBuf, PathBuf>,
+use super::{ThreadEntry, workspace_label_from_path_list};
+
+/// Identifies a project group by a set of paths the workspaces in this group
+/// have.
+///
+/// Paths are mapped to their main worktree path first so we can group
+/// workspaces by main repos.
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub struct ProjectGroupName {
+    path_list: PathList,
 }
 
-impl PathCanonicalizer {
-    pub fn new() -> Self {
+impl ProjectGroupName {
+    pub fn display_name(&self) -> SharedString {
+        workspace_label_from_path_list(&self.path_list)
+    }
+
+    pub fn path_list(&self) -> &PathList {
+        &self.path_list
+    }
+}
+
+#[derive(Default)]
+pub struct ProjectGroup {
+    pub workspaces: Vec<Entity<Workspace>>, // todo: should this be a set?
+    pub threads: Vec<ThreadEntry>,          // todo: ThreadEntry probably isn't quite right...
+}
+
+impl ProjectGroup {
+    fn add_workspace(&mut self, workspace: &Entity<Workspace>) {
+        if !self.workspaces.contains(workspace) {
+            self.workspaces.push(workspace.clone());
+        }
+    }
+}
+
+pub struct ProjectGroupBuilder {
+    /// Maps git repositories' work_directory_abs_path to their original_repo_abs_path
+    directory_mappings: HashMap<PathBuf, PathBuf>,
+    project_group_names: Vec<ProjectGroupName>,
+    project_groups: Vec<ProjectGroup>,
+}
+
+impl ProjectGroupBuilder {
+    fn new() -> Self {
         Self {
             directory_mappings: HashMap::new(),
+            project_group_names: Vec::new(),
+            project_groups: Vec::new(),
+        }
+    }
+
+    pub fn from_multiworkspace(mw: &MultiWorkspace, cx: &App) -> Self {
+        let mut builder = Self::new();
+        for workspace in mw.workspaces() {
+            builder.add_workspace_mappings(workspace.read(cx), cx);
+
+            let header_paths = workspace_canonical_paths(workspace, cx);
+            builder
+                .project_group_entry(&header_paths)
+                .add_workspace(workspace);
+        }
+        builder
+    }
+
+    fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
+        match self.project_group_names.iter().position(|n| n == name) {
+            Some(idx) => &mut self.project_groups[idx],
+            None => {
+                let idx = self.project_group_names.len();
+                self.project_group_names.push(name.clone());
+                self.project_groups.push(ProjectGroup::default());
+                &mut self.project_groups[idx]
+            }
         }
     }
 
@@ -60,24 +125,67 @@ impl PathCanonicalizer {
         }
     }
 
-    pub fn canonicalize_path<'a>(&'a self, path: &'a Path) -> &'a Path {
+    fn canonicalize_path<'a>(&'a self, path: &'a Path) -> &'a Path {
         self.directory_mappings
             .get(path)
             .map(AsRef::as_ref)
             .unwrap_or(path)
     }
 
-    pub fn canonicalize_path_list(&self, path_list: PathList) -> PathList {
+    pub fn canonicalize_path_list(&self, path_list: PathList) -> ProjectGroupName {
         let paths: Vec<_> = path_list
             .ordered_paths()
             .map(|path| self.canonicalize_path(path))
             .collect();
-        PathList::new(&paths)
+        ProjectGroupName {
+            path_list: PathList::new(&paths),
+        }
+    }
+
+    pub fn threads_by_group(
+        &self,
+    ) -> impl Iterator<Item = (&ProjectGroupName, std::slice::Iter<ThreadEntry>)> {
+        self.project_group_names
+            .iter()
+            .zip(self.project_groups.iter())
+            .map(|(group_name, group)| (group_name, group.threads.iter()))
+    }
+
+    pub fn project_groups_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&ProjectGroupName, &mut ProjectGroup)> {
+        self.project_group_names
+            .iter()
+            .zip(self.project_groups.iter_mut())
+    }
+}
+
+/// Derives a pathlist of the original repo abs paths for the given workspace,
+/// which will be shown in the header for this workspace in the sidebar.
+pub fn workspace_canonical_paths(workspace: &Entity<Workspace>, cx: &App) -> ProjectGroupName {
+    // TODO: We need to come up with something if this is not backed by git.
+
+    let mut paths = Vec::new();
+    for repo in workspace
+        .read(cx)
+        .project()
+        .read(cx)
+        .repositories(cx)
+        .values()
+    {
+        let snapshot = repo.read(cx).snapshot();
+        paths.push(snapshot.original_repo_abs_path.to_path_buf());
+    }
+
+    ProjectGroupName {
+        path_list: PathList::new(&paths),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
@@ -143,7 +251,7 @@ mod tests {
         });
 
         multi_workspace.read_with(cx, |mw, cx| {
-            let mut canonicalizer = PathCanonicalizer::new();
+            let mut canonicalizer = ProjectGroupBuilder::new();
             for workspace in mw.workspaces() {
                 canonicalizer.add_workspace_mappings(workspace.read(cx), cx);
             }
@@ -179,7 +287,7 @@ mod tests {
         });
 
         multi_workspace.read_with(cx, |mw, cx| {
-            let mut canonicalizer = PathCanonicalizer::new();
+            let mut canonicalizer = ProjectGroupBuilder::new();
             for workspace in mw.workspaces() {
                 canonicalizer.add_workspace_mappings(workspace.read(cx), cx);
             }
