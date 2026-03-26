@@ -2602,10 +2602,15 @@ impl EditorElement {
                     column: 0,
                 };
                 // move to other row if different excerpt
+                let range = if candidate_point < buffer_point {
+                    candidate_point..buffer_point
+                } else {
+                    buffer_point..candidate_point
+                };
                 if snapshot
                     .display_snapshot
                     .buffer_snapshot()
-                    .excerpt_containing(buffer_point..candidate_point)
+                    .excerpt_containing(range)
                     .is_none()
                 {
                     return false;
