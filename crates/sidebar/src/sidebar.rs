@@ -143,7 +143,7 @@ enum ListEntry {
     ProjectHeader {
         path_list: PathList,
         label: SharedString,
-        workspace: Option<Entity<Workspace>>, // todo! should this really be an option?
+        workspace: Entity<Workspace>,
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
         waiting_thread_count: usize,
@@ -571,9 +571,8 @@ impl Sidebar {
     /// Aim for a single forward pass over workspaces and threads plus an
     /// O(T log T) sort. Avoid adding extra scans over the data.
     ///
-    /// TODO: We can sort in the database and then this becomes O(W + T).
-    ///
     /// Properties:
+    ///
     /// - Should always show every workspace in the multiworkspace
     ///     - If you have no threads, and two workspaces for the worktree and the main workspace, make sure at least one is shown
     /// - Should always show every thread, associated with each workspace in the multiworkspace
@@ -682,10 +681,12 @@ impl Sidebar {
 
             // Pick a representative workspace for the group: prefer the active
             // workspace if it belongs to this group, otherwise use the first.
-            let representative_workspace = if is_active {
+            let Some(representative_workspace) = (if is_active {
                 active_workspace.as_ref()
             } else {
                 group.workspaces.first()
+            }) else {
+                continue;
             };
 
             // Collect live thread infos from all workspaces in this group.
@@ -924,7 +925,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
-                    workspace: representative_workspace.cloned(),
+                    workspace: representative_workspace.clone(),
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
                     waiting_thread_count,
@@ -948,7 +949,7 @@ impl Sidebar {
                 entries.push(ListEntry::ProjectHeader {
                     path_list: path_list.clone(),
                     label,
-                    workspace: representative_workspace.cloned(),
+                    workspace: representative_workspace.clone(),
                     highlight_positions: Vec::new(),
                     has_running_threads,
                     waiting_thread_count,
@@ -960,13 +961,11 @@ impl Sidebar {
                 }
 
                 if show_new_thread_entry {
-                    if let Some(workspace) = representative_workspace {
-                        entries.push(ListEntry::NewThread {
-                            path_list: path_list.clone(),
-                            workspace: workspace.clone(),
-                            is_active_draft: is_draft_for_workspace,
-                        });
-                    }
+                    entries.push(ListEntry::NewThread {
+                        path_list: path_list.clone(),
+                        workspace: representative_workspace.clone(),
+                        is_active_draft: is_draft_for_workspace,
+                    });
                 }
 
                 let total = threads.len();
@@ -1101,7 +1100,7 @@ impl Sidebar {
                 false,
                 path_list,
                 label,
-                &workspace.clone().unwrap(),
+                workspace,
                 highlight_positions,
                 *has_running_threads,
                 *waiting_thread_count,
@@ -1573,7 +1572,7 @@ impl Sidebar {
             true,
             &path_list,
             &label,
-            &workspace.clone().unwrap(),
+            workspace,
             &highlight_positions,
             *has_running_threads,
             *waiting_thread_count,
@@ -2362,7 +2361,7 @@ impl Sidebar {
                 // when metadata is saved via ThreadMetadata::from_thread.
                 let target_workspace = match &next.workspace {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
-                    ThreadEntryWorkspace::Closed(_) => group_workspace.clone().unwrap(),
+                    ThreadEntryWorkspace::Closed(_) => group_workspace.clone(),
                 };
 
                 if let Some(workspace) = target_workspace {
@@ -2383,9 +2382,7 @@ impl Sidebar {
             } else {
                 self.focused_thread = None;
                 if let Some(workspace) = &group_workspace {
-                    if let Some(agent_panel) =
-                        workspace.clone().unwrap().read(cx).panel::<AgentPanel>(cx)
-                    {
+                    if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         agent_panel.update(cx, |panel, cx| {
                             panel.new_thread(&NewThread, window, cx);
                         });
@@ -2685,18 +2682,16 @@ impl Sidebar {
                 })
         } else {
             // Use the currently active workspace.
-            Some(
-                self.multi_workspace
-                    .upgrade()
-                    .map(|mw| mw.read(cx).workspace().clone()),
-            )
+            self.multi_workspace
+                .upgrade()
+                .map(|mw| mw.read(cx).workspace().clone())
         };
 
         let Some(workspace) = workspace else {
             return;
         };
 
-        self.create_new_thread(&workspace.as_ref().unwrap(), window, cx);
+        self.create_new_thread(&workspace, window, cx);
     }
 
     fn create_new_thread(
@@ -3795,7 +3790,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: expanded_path.clone(),
                     label: "expanded-project".into(),
-                    workspace: Some(workspace.clone()),
+                    workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
                     waiting_thread_count: 0,
@@ -3929,7 +3924,7 @@ mod tests {
                 ListEntry::ProjectHeader {
                     path_list: collapsed_path.clone(),
                     label: "collapsed-project".into(),
-                    workspace: Some(workspace.clone()),
+                    workspace: workspace.clone(),
                     highlight_positions: Vec::new(),
                     has_running_threads: false,
                     waiting_thread_count: 0,
@@ -7161,8 +7156,7 @@ mod tests {
             .await;
 
         let multi_root =
-            project::Project::test(fs.clone(), ["/other".as_ref(), "/project".as_ref()], cx)
-                .await;
+            project::Project::test(fs.clone(), ["/other".as_ref(), "/project".as_ref()], cx).await;
         multi_root
             .update(cx, |p, cx| p.git_scans_complete(cx))
             .await;
