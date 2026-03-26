@@ -18,7 +18,7 @@ use project::git_store::RepositorySnapshot;
 use ui::SharedString;
 use workspace::{MultiWorkspace, PathList, Workspace};
 
-use super::{ThreadEntry, workspace_label_from_path_list};
+use super::workspace_label_from_path_list;
 
 /// Identifies a project group by a set of paths the workspaces in this group
 /// have.
@@ -42,8 +42,7 @@ impl ProjectGroupName {
 
 #[derive(Default)]
 pub struct ProjectGroup {
-    pub workspaces: Vec<Entity<Workspace>>, // todo: should this be a set?
-    pub threads: Vec<ThreadEntry>,          // todo: ThreadEntry probably isn't quite right...
+    pub workspaces: Vec<Entity<Workspace>>,
 }
 
 impl ProjectGroup {
@@ -72,12 +71,20 @@ impl ProjectGroupBuilder {
 
     pub fn from_multiworkspace(mw: &MultiWorkspace, cx: &App) -> Self {
         let mut builder = Self::new();
+
+        // First pass: collect all directory mappings from every workspace
+        // so we know how to canonicalize any path (including linked
+        // worktree paths discovered by the main repo's workspace).
         for workspace in mw.workspaces() {
             builder.add_workspace_mappings(workspace.read(cx), cx);
+        }
 
-            let header_paths = workspace_canonical_paths(workspace, cx);
+        // Second pass: group each workspace using canonical paths derived
+        // from the full set of mappings.
+        for workspace in mw.workspaces() {
+            let group_name = builder.canonical_workspace_paths(workspace, cx);
             builder
-                .project_group_entry(&header_paths)
+                .project_group_entry(&group_name)
                 .add_workspace(workspace);
         }
         builder
@@ -125,60 +132,35 @@ impl ProjectGroupBuilder {
         }
     }
 
-    fn canonicalize_path<'a>(&'a self, path: &'a Path) -> &'a Path {
-        self.directory_mappings
-            .get(path)
-            .map(AsRef::as_ref)
-            .unwrap_or(path)
-    }
-
-    pub fn canonicalize_path_list(&self, path_list: PathList) -> ProjectGroupName {
-        let paths: Vec<_> = path_list
-            .ordered_paths()
-            .map(|path| self.canonicalize_path(path))
+    /// Derives the canonical group name for a workspace by canonicalizing
+    /// each of its root paths using the builder's directory mappings.
+    fn canonical_workspace_paths(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) -> ProjectGroupName {
+        let paths: Vec<_> = workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|p| self.canonicalize_path(p).to_path_buf())
             .collect();
         ProjectGroupName {
             path_list: PathList::new(&paths),
         }
     }
 
-    pub fn threads_by_group(
-        &self,
-    ) -> impl Iterator<Item = (&ProjectGroupName, std::slice::Iter<ThreadEntry>)> {
+    pub fn canonicalize_path<'a>(&'a self, path: &'a Path) -> &'a Path {
+        self.directory_mappings
+            .get(path)
+            .map(AsRef::as_ref)
+            .unwrap_or(path)
+    }
+
+    pub fn groups(&self) -> impl Iterator<Item = (&ProjectGroupName, &ProjectGroup)> {
         self.project_group_names
             .iter()
             .zip(self.project_groups.iter())
-            .map(|(group_name, group)| (group_name, group.threads.iter()))
-    }
-
-    pub fn project_groups_mut(
-        &mut self,
-    ) -> impl Iterator<Item = (&ProjectGroupName, &mut ProjectGroup)> {
-        self.project_group_names
-            .iter()
-            .zip(self.project_groups.iter_mut())
-    }
-}
-
-/// Derives a pathlist of the original repo abs paths for the given workspace,
-/// which will be shown in the header for this workspace in the sidebar.
-pub fn workspace_canonical_paths(workspace: &Entity<Workspace>, cx: &App) -> ProjectGroupName {
-    // TODO: We need to come up with something if this is not backed by git.
-
-    let mut paths = Vec::new();
-    for repo in workspace
-        .read(cx)
-        .project()
-        .read(cx)
-        .repositories(cx)
-        .values()
-    {
-        let snapshot = repo.read(cx).snapshot();
-        paths.push(snapshot.original_repo_abs_path.to_path_buf());
-    }
-
-    ProjectGroupName {
-        path_list: PathList::new(&paths),
     }
 }
 
