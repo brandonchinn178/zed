@@ -255,7 +255,6 @@ fn load_collapsed_groups(kvp: &KeyValueStore) -> HashSet<PathList> {
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
-
 /// change via `update_entries` → `rebuild_contents`. Avoid adding
 /// incremental or inter-event coordination state — if something can
 /// be computed from the current world state, compute it in the rebuild.
