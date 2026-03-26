@@ -564,12 +564,20 @@ impl Sidebar {
 
     /// Rebuilds the sidebar contents from current workspace and thread state.
     ///
-    /// Uses [`ProjectGroupBuilder`] to canonically group workspaces by their
-    /// main git repository, then populates thread entries from the metadata
-    /// store and merges live thread info from active agent panels.
+    /// Uses [`ProjectGroupBuilder`] to group workspaces by their main git
+    /// repository, then populates thread entries from the metadata store and
+    /// merges live thread info from active agent panels.
     ///
     /// Aim for a single forward pass over workspaces and threads plus an
     /// O(T log T) sort. Avoid adding extra scans over the data.
+    ///
+    /// TODO: We can sort in the database and then this becomes O(W + T).
+    ///
+    /// Properties:
+    /// - Should always show every workspace in the multiworkspace
+    ///     - If you have no threads, and two workspaces for the worktree and the main workspace, make sure at least one is shown
+    /// - Should always show every thread, associated with each workspace in the multiworkspace
+    /// - After every build_contents, our "active" state should exactly match the current workspace's, current agent panel's current thread.
     fn rebuild_contents(&mut self, cx: &App) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
@@ -695,16 +703,6 @@ impl Sidebar {
                 let mut seen_session_ids: HashSet<acp::SessionId> = HashSet::new();
                 let thread_store = SidebarThreadMetadataStore::global(cx);
 
-                // Track which filesystem paths are covered by open workspaces
-                // in this group, so we can find linked worktrees that need
-                // separate thread queries below.
-                let mut covered_paths: HashSet<Arc<Path>> = HashSet::new();
-                for workspace in &group.workspaces {
-                    for path in workspace_path_list(workspace, cx).paths() {
-                        covered_paths.insert(Arc::from(path.as_path()));
-                    }
-                }
-
                 // Load threads from each workspace in the group.
                 for workspace in &group.workspaces {
                     let ws_path_list = workspace_path_list(workspace, cx);
@@ -774,7 +772,7 @@ impl Sidebar {
 
                         for git_worktree in snapshot.linked_worktrees() {
                             let worktree_arc: Arc<Path> = Arc::from(git_worktree.path.as_path());
-                            if covered_paths.contains(&worktree_arc) {
+                            if group.covered_paths.contains(&worktree_arc) {
                                 continue;
                             }
 

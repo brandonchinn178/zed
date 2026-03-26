@@ -9,8 +9,9 @@
 //! lookup and mapping.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use gpui::{App, Entity};
@@ -43,12 +44,19 @@ impl ProjectGroupName {
 #[derive(Default)]
 pub struct ProjectGroup {
     pub workspaces: Vec<Entity<Workspace>>,
+    /// Root paths of all open workspaces in this group. Used to skip
+    /// redundant thread-store queries for linked worktrees that already
+    /// have an open workspace.
+    pub covered_paths: HashSet<Arc<Path>>,
 }
 
 impl ProjectGroup {
-    fn add_workspace(&mut self, workspace: &Entity<Workspace>) {
+    fn add_workspace(&mut self, workspace: &Entity<Workspace>, cx: &App) {
         if !self.workspaces.contains(workspace) {
             self.workspaces.push(workspace.clone());
+        }
+        for path in workspace.read(cx).root_paths(cx) {
+            self.covered_paths.insert(path);
         }
     }
 }
@@ -85,7 +93,7 @@ impl ProjectGroupBuilder {
             let group_name = builder.canonical_workspace_paths(workspace, cx);
             builder
                 .project_group_entry(&group_name)
-                .add_workspace(workspace);
+                .add_workspace(workspace, cx);
         }
         builder
     }
