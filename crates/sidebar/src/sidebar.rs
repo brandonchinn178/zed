@@ -681,6 +681,9 @@ impl Sidebar {
 
             // Pick a representative workspace for the group: prefer the active
             // workspace if it belongs to this group, otherwise use the first.
+            //
+            // This is the workspace that will be activated by the project group
+            // header.
             let representative_workspace = if is_active {
                 active_workspace.as_ref()
             } else {
