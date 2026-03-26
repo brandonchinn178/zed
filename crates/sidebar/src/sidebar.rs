@@ -26,9 +26,7 @@ use ui::utils::platform_title_bar_height;
 use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
-use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, KeyBinding,
@@ -763,64 +761,70 @@ impl Sidebar {
                 }
 
                 // Load threads from linked git worktrees that don't have an
-                // open workspace in this group.
-                for workspace in &group.workspaces {
-                    for snapshot in root_repository_snapshots(workspace, cx) {
-                        if snapshot.is_linked_worktree() {
+                // open workspace in this group. Only include worktrees that
+                // belong to this group (not shared with another group).
+                let linked_worktree_queries: Vec<_> = group
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| root_repository_snapshots(ws, cx))
+                    .filter(|snapshot| !snapshot.is_linked_worktree())
+                    .flat_map(|snapshot| {
+                        let main_worktree_path = snapshot.original_repo_abs_path.clone();
+                        snapshot
+                            .linked_worktrees()
+                            .iter()
+                            .filter(|wt| {
+                                project_groups.group_owns_worktree(group, &path_list, &wt.path)
+                            })
+                            .map(move |wt| {
+                                let worktree_name =
+                                    linked_worktree_short_name(&main_worktree_path, &wt.path)
+                                        .unwrap_or_default();
+                                let worktree_path_list =
+                                    PathList::new(std::slice::from_ref(&wt.path));
+                                let worktree_full_path: SharedString =
+                                    wt.path.display().to_string().into();
+                                (worktree_path_list, worktree_name, worktree_full_path)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+
+                for (worktree_path_list, worktree_name, worktree_full_path) in
+                    linked_worktree_queries
+                {
+                    let worktree_rows: Vec<_> = thread_store
+                        .read(cx)
+                        .entries_for_path(&worktree_path_list)
+                        .collect();
+                    for row in worktree_rows {
+                        if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
-
-                        let main_worktree_path = snapshot.original_repo_abs_path.clone();
-
-                        for git_worktree in snapshot.linked_worktrees() {
-                            let worktree_arc: Arc<Path> = Arc::from(git_worktree.path.as_path());
-                            if group.covered_paths.contains(&worktree_arc) {
-                                continue;
-                            }
-
-                            let worktree_name =
-                                linked_worktree_short_name(&main_worktree_path, &git_worktree.path)
-                                    .unwrap_or_default();
-                            let worktree_path_list =
-                                PathList::new(std::slice::from_ref(&git_worktree.path));
-                            let worktree_rows: Vec<_> = thread_store
-                                .read(cx)
-                                .entries_for_path(&worktree_path_list)
-                                .collect();
-                            for row in worktree_rows {
-                                if !seen_session_ids.insert(row.session_id.clone()) {
-                                    continue;
-                                }
-                                let (agent, icon, icon_from_external_svg) = resolve_agent(&row);
-                                threads.push(ThreadEntry {
-                                    agent,
-                                    session_info: acp_thread::AgentSessionInfo {
-                                        session_id: row.session_id.clone(),
-                                        work_dirs: None,
-                                        title: Some(row.title.clone()),
-                                        updated_at: Some(row.updated_at),
-                                        created_at: row.created_at,
-                                        meta: None,
-                                    },
-                                    icon,
-                                    icon_from_external_svg,
-                                    status: AgentThreadStatus::default(),
-                                    workspace: ThreadEntryWorkspace::Closed(
-                                        worktree_path_list.clone(),
-                                    ),
-                                    is_live: false,
-                                    is_background: false,
-                                    is_title_generating: false,
-                                    highlight_positions: Vec::new(),
-                                    worktree_name: Some(worktree_name.clone()),
-                                    worktree_full_path: Some(
-                                        git_worktree.path.display().to_string().into(),
-                                    ),
-                                    worktree_highlight_positions: Vec::new(),
-                                    diff_stats: DiffStats::default(),
-                                });
-                            }
-                        }
+                        let (agent, icon, icon_from_external_svg) = resolve_agent(&row);
+                        threads.push(ThreadEntry {
+                            agent,
+                            session_info: acp_thread::AgentSessionInfo {
+                                session_id: row.session_id.clone(),
+                                work_dirs: None,
+                                title: Some(row.title.clone()),
+                                updated_at: Some(row.updated_at),
+                                created_at: row.created_at,
+                                meta: None,
+                            },
+                            icon,
+                            icon_from_external_svg,
+                            status: AgentThreadStatus::default(),
+                            workspace: ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
+                            is_live: false,
+                            is_background: false,
+                            is_title_generating: false,
+                            highlight_positions: Vec::new(),
+                            worktree_name: Some(worktree_name.clone()),
+                            worktree_full_path: Some(worktree_full_path.clone()),
+                            worktree_highlight_positions: Vec::new(),
+                            diff_stats: DiffStats::default(),
+                        });
                     }
                 }
 
@@ -7096,6 +7100,95 @@ mod tests {
             entries_after.iter().any(|s| s.contains("{wt-feature-a}")),
             "T1 should still carry its linked-worktree chip after archiving T2: {:?}",
             entries_after
+        );
+    }
+
+    #[gpui::test]
+    async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut TestAppContext) {
+        // When a multi-root workspace (e.g. [/other, /project]) shares a
+        // repo with a single-root workspace (e.g. [/project]), linked
+        // worktree threads from the shared repo should only appear under
+        // the dedicated group [project], not under [other, project].
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": {},
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/wt-feature-a",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": {},
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/other",
+            serde_json::json!({
+                ".git": {},
+                "src": {},
+            }),
+        )
+        .await;
+
+        fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
+            state.worktrees.push(git::repository::Worktree {
+                path: std::path::PathBuf::from("/wt-feature-a"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "aaa".into(),
+            });
+        })
+        .unwrap();
+
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let project_only = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        project_only
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let multi_root =
+            project::Project::test(fs.clone(), ["/other".as_ref(), "/project".as_ref()], cx)
+                .await;
+        multi_root
+            .update(cx, |p, cx| p.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(project_only.clone(), window, cx)
+        });
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(multi_root.clone(), window, cx);
+        });
+        let sidebar = setup_sidebar(&multi_workspace, cx);
+
+        let wt_paths = PathList::new(&[std::path::PathBuf::from("/wt-feature-a")]);
+        save_named_thread_metadata("wt-thread", "Worktree Thread", &wt_paths, cx).await;
+
+        multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&sidebar, cx),
+            vec![
+                "v [project]",
+                "  Worktree Thread {wt-feature-a}",
+                "v [other, project]",
+                "  [+ New Thread]",
+            ]
         );
     }
 }
