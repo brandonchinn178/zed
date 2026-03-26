@@ -5943,6 +5943,26 @@ impl Editor {
         }
     }
 
+    pub fn is_lsp_relevant(&self, file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
+        let Some(project) = self.project() else {
+            return false;
+        };
+        let Some(buffer_file) = project::File::from_dyn(file) else {
+            return false;
+        };
+        let Some(entry_id) = buffer_file.project_entry_id() else {
+            return false;
+        };
+        let project = project.read(cx);
+        let Some(buffer_worktree) = project.worktree_for_id(buffer_file.worktree_id(cx), cx) else {
+            return false;
+        };
+        let Some(worktree_entry) = buffer_worktree.read(cx).entry_for_id(entry_id) else {
+            return false;
+        };
+        !worktree_entry.is_ignored
+    }
+
     pub fn visible_buffers(&self, cx: &mut Context<Editor>) -> Vec<Entity<Buffer>> {
         let display_snapshot = self.display_snapshot(cx);
         let visible_range = self.multi_buffer_visible_range(&display_snapshot, cx);
@@ -25670,7 +25690,12 @@ impl Editor {
         if !self.lsp_data_enabled() {
             return;
         }
-        for visible_buffer in self.visible_buffers(cx) {
+        let visible_buffers: Vec<_> = self
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .collect();
+        for visible_buffer in visible_buffers {
             self.register_buffer(visible_buffer.read(cx).remote_id(), cx);
         }
     }
