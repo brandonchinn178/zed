@@ -203,12 +203,10 @@ fn insert_mention_for_project_path(
         MentionInsertPosition::AtCursor => editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx);
             let snapshot = buffer.snapshot(cx);
-            let (_, _, buffer_snapshot) = snapshot.as_singleton()?;
-            let text_anchor = editor
-                .selections
-                .newest_anchor()
-                .start
-                .text_anchor
+            let buffer_snapshot = snapshot.as_singleton()?;
+            let text_anchor = snapshot
+                .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
+                .0
                 .bias_left(&buffer_snapshot);
 
             editor.insert(&mention_text, window, cx);
@@ -224,7 +222,7 @@ fn insert_mention_for_project_path(
             editor.update(cx, |editor, cx| {
                 editor.edit(
                     [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        multi_buffer::Anchor::Max..multi_buffer::Anchor::Max,
                         new_text,
                     )],
                     cx,
@@ -1384,21 +1382,20 @@ impl MessageEditor {
                     };
                     let mention_text = mention_uri.as_link().to_string();
 
-                    let (excerpt_id, text_anchor, content_len) = editor.update(cx, |editor, cx| {
+                    let (text_anchor, content_len) = editor.update(cx, |editor, cx| {
                         let buffer = editor.buffer().read(cx);
                         let snapshot = buffer.snapshot(cx);
-                        let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-                        let text_anchor = editor
-                            .selections
-                            .newest_anchor()
-                            .start
-                            .text_anchor
+                        let buffer_snapshot = snapshot.as_singleton().unwrap();
+                        let text_anchor = snapshot
+                            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
+                            .unwrap()
+                            .0
                             .bias_left(&buffer_snapshot);
 
                         editor.insert(&mention_text, window, cx);
                         editor.insert(" ", window, cx);
 
-                        (excerpt_id, text_anchor, mention_text.len())
+                        (text_anchor, mention_text.len())
                     });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(

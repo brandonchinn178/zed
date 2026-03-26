@@ -18,7 +18,6 @@ use gpui::{
     Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
-use itertools::Itertools as _;
 use language::{Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};

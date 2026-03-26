@@ -1956,7 +1956,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
 
     fn apply_code_action(
         &self,
-        buffer: Entity<Buffer>,
+        _buffer: Entity<Buffer>,
         action: CodeAction,
         _push_to_history: bool,
         window: &mut Window,
@@ -1987,7 +1987,6 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             let range = editor
                 .update(cx, |editor, cx| {
                     editor.buffer().update(cx, |multibuffer, cx| {
-                        let buffer = buffer.read(cx);
                         let multibuffer_snapshot = multibuffer.read(cx);
                         multibuffer_snapshot.buffer_anchor_range_to_anchor_range(action.range)
                     })

@@ -375,7 +375,7 @@ fn render_conflict_buttons(
                             let content = editor
                                 .update(cx, |editor, cx| {
                                     let multibuffer = editor.buffer().read(cx);
-                                    let buffer_id = conflict.ours.end.buffer_id?;
+                                    let buffer_id = conflict.ours.end.buffer_id;
                                     let buffer = multibuffer.buffer(buffer_id)?;
                                     let buffer_read = buffer.read(cx);
                                     let snapshot = buffer_read.snapshot();

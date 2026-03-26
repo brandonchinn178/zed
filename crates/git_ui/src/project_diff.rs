@@ -518,9 +518,7 @@ impl ProjectDiff {
         self.editor.update(cx, |editor, cx| {
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(vec![
-                        multi_buffer::Anchor::min()..multi_buffer::Anchor::min(),
-                    ]);
+                    s.select_ranges(vec![multi_buffer::Anchor::Min..multi_buffer::Anchor::Min]);
                 });
             });
         });
@@ -2269,7 +2267,6 @@ mod tests {
                 .excerpts()
                 .collect::<Vec<_>>();
             assert_eq!(excerpts.len(), 1);
-            let excerpt = excerpts[0].clone();
             let buffer = editor
                 .read(cx)
                 .buffer()
