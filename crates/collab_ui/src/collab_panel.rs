@@ -237,7 +237,6 @@ impl ChannelEditingState {
 }
 
 pub struct CollabPanel {
-    width: Option<Pixels>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     channel_clipboard: Option<ChannelMoveClipboard>,
@@ -263,7 +262,6 @@ pub struct CollabPanel {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedCollabPanel {
-    width: Option<Pixels>,
     collapsed_channels: Option<Vec<u64>>,
 }
 
@@ -371,7 +369,6 @@ impl CollabPanel {
             .detach();
 
             let mut this = Self {
-                width: None,
                 focus_handle: cx.focus_handle(),
                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
@@ -461,7 +458,6 @@ impl CollabPanel {
             let panel = CollabPanel::new(workspace, window, cx);
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(|w| w.round());
                     panel.collapsed_channels = serialized_panel
                         .collapsed_channels
                         .unwrap_or_else(Vec::new)
@@ -492,19 +488,17 @@ impl CollabPanel {
         else {
             return;
         };
-        let width = self.width;
-        let collapsed_channels = self.collapsed_channels.clone();
+        let collapsed_channels = if self.collapsed_channels.is_empty() {
+            None
+        } else {
+            Some(self.collapsed_channels.iter().map(|id| id.0).collect())
+        };
         let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
                 kvp.write_kvp(
                     serialization_key,
-                    serde_json::to_string(&SerializedCollabPanel {
-                        width,
-                        collapsed_channels: Some(
-                            collapsed_channels.iter().map(|cid| cid.0).collect(),
-                        ),
-                    })?,
+                    serde_json::to_string(&SerializedCollabPanel { collapsed_channels })?,
                 )
                 .await?;
                 anyhow::Ok(())
@@ -2346,46 +2340,57 @@ impl CollabPanel {
 
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
-        let is_signing_in = self.client.status().borrow().is_signing_in();
-        let button_label = if is_signing_in {
-            "Signing in…"
+
+        // Two distinct "not connected" states:
+        //   - Authenticated (has credentials): user just needs to connect.
+        //   - Unauthenticated (no credentials): user needs to sign in via GitHub.
+        let is_authenticated = self.client.user_id().is_some();
+        let status = *self.client.status().borrow();
+        let is_busy = status.is_signing_in();
+
+        let (button_id, button_label, button_icon) = if is_authenticated {
+            (
+                "connect",
+                if is_busy { "Connecting…" } else { "Connect" },
+                IconName::Public,
+            )
         } else {
-            "Sign in"
+            (
+                "sign_in",
+                if is_busy {
+                    "Signing in…"
+                } else {
+                    "Sign In with GitHub"
+                },
+                IconName::Github,
+            )
         };
 
         v_flex()
-            .gap_6()
             .p_4()
+            .gap_4()
+            .size_full()
+            .text_center()
+            .justify_center()
             .child(Label::new(collab_blurb))
             .child(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("sign_in", button_label)
-                            .start_icon(Icon::new(IconName::Github).color(Color::Muted))
-                            .style(ButtonStyle::Filled)
-                            .full_width()
-                            .disabled(is_signing_in)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                let client = this.client.clone();
-                                let workspace = this.workspace.clone();
-                                cx.spawn_in(window, async move |_, mut cx| {
-                                    client
-                                        .connect(true, &mut cx)
-                                        .await
-                                        .into_response()
-                                        .notify_workspace_async_err(workspace, &mut cx);
-                                })
-                                .detach()
-                            })),
-                    )
-                    .child(
-                        v_flex().w_full().items_center().child(
-                            Label::new("Sign in to enable collaboration.")
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        ),
-                    ),
+                Button::new(button_id, button_label)
+                    .full_width()
+                    .start_icon(Icon::new(button_icon).color(Color::Muted))
+                    .style(ButtonStyle::Outlined)
+                    .disabled(is_busy)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let client = this.client.clone();
+                        let workspace = this.workspace.clone();
+                        cx.spawn_in(window, async move |_, mut cx| {
+                            client
+                                .connect(true, &mut cx)
+                                .await
+                                .into_response()
+                                .notify_workspace_async_err(workspace, &mut cx);
+                        })
+                        .detach()
+                    })),
             )
     }
 
@@ -2915,7 +2920,16 @@ impl CollabPanel {
             Some(result)
         };
 
-        let width = self.width.unwrap_or(px(240.));
+        let width = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .panel_size_state::<Self>(cx)
+                    .and_then(|size_state| size_state.size)
+            })
+            .ok()
+            .flatten()
+            .unwrap_or(px(240.));
         let root_id = channel.root_id();
 
         div()
@@ -3193,17 +3207,8 @@ impl Panel for CollabPanel {
         });
     }
 
-    fn size(&self, _window: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        cx.notify();
-        cx.defer_in(window, |this, _, cx| {
-            this.serialize(cx);
-        });
+    fn default_size(&self, _window: &Window, cx: &App) -> Pixels {
+        CollaborationPanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
@@ -3229,7 +3234,7 @@ impl Panel for CollabPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        6
+        5
     }
 }
 
