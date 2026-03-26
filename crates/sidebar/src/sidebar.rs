@@ -684,14 +684,10 @@ impl Sidebar {
             //
             // This is the workspace that will be activated by the project group
             // header.
-            let representative_workspace = if is_active {
-                active_workspace.as_ref()
-            } else {
-                group.workspaces.first()
-            };
-            let Some(representative_workspace) = representative_workspace else {
-                continue;
-            };
+            let representative_workspace = active_workspace
+                .as_ref()
+                .filter(|_| is_active)
+                .unwrap_or_else(|| group.first_workspace());
 
             // Collect live thread infos from all workspaces in this group.
             let live_infos: Vec<_> = group
@@ -785,11 +781,7 @@ impl Sidebar {
                     });
 
                 for worktree_path_list in linked_worktree_path_lists {
-                    let worktree_rows: Vec<_> = thread_store
-                        .read(cx)
-                        .entries_for_path(&worktree_path_list)
-                        .collect();
-                    for row in worktree_rows {
+                    for row in thread_store.read(cx).entries_for_path(&worktree_path_list) {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
@@ -849,7 +841,7 @@ impl Sidebar {
                 // in a single pass.
                 for thread in &mut threads {
                     if let Some(info) = live_info_by_session.get(&thread.session_info.session_id) {
-                        thread.apply_active_info(*info);
+                        thread.apply_active_info(info);
                     }
 
                     let session_id = &thread.session_info.session_id;
@@ -2363,7 +2355,7 @@ impl Sidebar {
                 // when metadata is saved via ThreadMetadata::from_thread.
                 let target_workspace = match &next.workspace {
                     ThreadEntryWorkspace::Open(ws) => Some(ws.clone()),
-                    ThreadEntryWorkspace::Closed(_) => group_workspace.clone(),
+                    ThreadEntryWorkspace::Closed(_) => group_workspace,
                 };
 
                 if let Some(workspace) = target_workspace {

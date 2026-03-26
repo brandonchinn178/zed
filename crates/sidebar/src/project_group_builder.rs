@@ -59,6 +59,12 @@ impl ProjectGroup {
             self.covered_paths.insert(path);
         }
     }
+
+    pub fn first_workspace(&self) -> &Entity<Workspace> {
+        self.workspaces
+            .first()
+            .expect("groups always have at least one workspace")
+    }
 }
 
 pub struct ProjectGroupBuilder {
