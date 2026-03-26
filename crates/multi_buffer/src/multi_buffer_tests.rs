@@ -2561,21 +2561,23 @@ async fn test_map_excerpt_ranges(cx: &mut TestAppContext) {
         ),
         Some(vec![
             (
-                Some(
-                    snapshot.point_to_offset(Point::new(1, 3))
-                        ..snapshot.point_to_offset(Point::new(1, 6)),
-                ),
+                snapshot.point_to_offset(Point::new(1, 3))
+                    ..snapshot.point_to_offset(Point::new(1, 6)),
                 (),
             ),
-            (None, ()),
             (
-                Some(
-                    snapshot.point_to_offset(Point::new(4, 2))
-                        ..snapshot.point_to_offset(Point::new(4, 7)),
-                ),
+                snapshot.point_to_offset(Point::zero())..snapshot.point_to_offset(Point::new(5, 1)),
+                ()
+            ),
+            (
+                snapshot.point_to_offset(Point::new(4, 2))
+                    ..snapshot.point_to_offset(Point::new(4, 7)),
                 (),
             ),
-            (None, ()),
+            (
+                snapshot.point_to_offset(Point::zero())..snapshot.point_to_offset(Point::new(4, 0)),
+                ()
+            ),
         ]),
     );
 
@@ -2605,10 +2607,7 @@ async fn test_map_excerpt_ranges(cx: &mut TestAppContext) {
             },
         ),
         Some(vec![(
-            Some(
-                snapshot.point_to_offset(Point::new(7, 3))
-                    ..snapshot.point_to_offset(Point::new(7, 6)),
-            ),
+            snapshot.point_to_offset(Point::new(7, 3))..snapshot.point_to_offset(Point::new(7, 6)),
             (),
         )]),
     );

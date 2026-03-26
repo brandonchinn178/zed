@@ -164,28 +164,25 @@ fn compute_bracket_ranges(
         .filter_map(|pair| {
             let color_index = pair.color_index?;
 
-            let buffer_open_range =
-                if context.start <= pair.open_range.start && pair.open_range.end <= context.end {
-                    let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
-                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
-                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?
-                } else {
-                    return None;
-                };
+            let mut ranges = Vec::new();
 
-            let buffer_close_range =
-                if context.start <= pair.close_range.start && pair.close_range.end <= context.end {
-                    let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
+            if context.start <= pair.open_range.start && pair.open_range.end <= context.end {
+                let anchors = buffer_snapshot.anchor_range_inside(pair.open_range);
+                ranges.push(
                     multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
-                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?
-                } else {
-                    return None;
-                };
+                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
+                );
+            };
 
-            Some((
-                color_index % accents_count,
-                vec![buffer_open_range, buffer_close_range],
-            ))
+            if context.start <= pair.close_range.start && pair.close_range.end <= context.end {
+                let anchors = buffer_snapshot.anchor_range_inside(pair.close_range);
+                ranges.push(
+                    multi_buffer_snapshot.anchor_in_buffer(anchors.start)?
+                        ..multi_buffer_snapshot.anchor_in_buffer(anchors.end)?,
+                );
+            };
+
+            Some((color_index % accents_count, ranges))
         })
         .collect()
 }

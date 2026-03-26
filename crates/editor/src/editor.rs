@@ -17045,7 +17045,7 @@ impl Editor {
                             (),
                         )]
                     },
-                ) && let [(Some(new_range), _)] = results.as_slice()
+                ) && let [(new_range, _)] = results.as_slice()
                 {
                     selected_sibling = true;
                     let new_range =
@@ -17105,7 +17105,7 @@ impl Editor {
                             (),
                         )]
                     },
-                ) && let [(Some(new_range), _)] = results.as_slice()
+                ) && let [(new_range, _)] = results.as_slice()
                 {
                     selected_sibling = true;
                     let new_range = multibuffer_snapshot.anchor_after(new_range.start)

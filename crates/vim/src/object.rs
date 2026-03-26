@@ -261,8 +261,8 @@ fn find_mini_delimiters(
 
     Some(
         DelimiterRange {
-            open: results[0].0.clone()?,
-            close: results[1].0.clone()?,
+            open: results[0].0.clone(),
+            close: results[1].0.clone(),
         }
         .to_display_range(map, around),
     )
@@ -996,7 +996,6 @@ pub fn surrounding_html_tag(
     )?;
 
     let (result, ()) = results.into_iter().next()?;
-    let result = result?;
     Some(result.start.to_display_point(map)..result.end.to_display_point(map))
 }
 
@@ -1219,7 +1218,6 @@ fn text_object(
         })?;
 
     let (range, ()) = results.into_iter().next()?;
-    let range = range?;
     Some(range.start.to_display_point(map)..range.end.to_display_point(map))
 }
 
@@ -1353,7 +1351,6 @@ fn argument(
         })?;
 
     let (range, ()) = results.into_iter().next()?;
-    let range = range?;
     Some(range.start.to_display_point(map)..range.end.to_display_point(map))
 }
 

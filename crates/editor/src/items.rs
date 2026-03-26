@@ -514,9 +514,9 @@ fn serialize_anchor(anchor: &Anchor) -> proto::EditorAnchor {
         Anchor::Max => proto::EditorAnchor {
             excerpt_id: None,
             anchor: Some(proto::Anchor {
-                replica_id: 0,
-                timestamp: 0,
-                offset: 0,
+                replica_id: u32::MAX,
+                timestamp: u32::MAX,
+                offset: u64::MAX,
                 bias: proto::Bias::Right as i32,
                 buffer_id: None,
             }),
@@ -576,7 +576,7 @@ fn deserialize_anchor(anchor: proto::EditorAnchor, buffer: &MultiBufferSnapshot)
         && BufferId::new(buffer_id).is_ok()
     {
         let text_anchor = language::proto::deserialize_anchor(anchor)?;
-        buffer.anchor_in_excerpt(text_anchor)
+        buffer.anchor_in_buffer(text_anchor)
     } else {
         match proto::Bias::from_i32(anchor.bias)? {
             proto::Bias::Left => Some(Anchor::Min),

@@ -1644,7 +1644,7 @@ impl MultiBuffer {
             cursor.seek(&start, Bias::Left);
             while let Some(excerpt) = cursor.item() {
                 let excerpt_start =
-                    Anchor::in_buffer(excerpt.path_key_index, excerpt.range.context.end);
+                    Anchor::in_buffer(excerpt.path_key_index, excerpt.range.context.start);
                 if excerpt_start.cmp(&selection.end, &snapshot).is_gt() {
                     break;
                 }
@@ -5465,9 +5465,6 @@ impl MultiBufferSnapshot {
     /// to multibuffer offsets and returned.
     ///
     /// Returns `None` if the input range spans multiple excerpts.
-    /// When lifting buffer ranges back to multibuffer offsets, does not include deleted hunks at the endpoints, and yields `None`
-    /// if there would be internal deleted hunks in the multibuffer offset range. Thus, the successfully lifted ranges always
-    /// have the same length as their original buffer ranges.
     pub fn map_excerpt_ranges<'a, T>(
         &'a self,
         position: Range<MultiBufferOffset>,
@@ -5476,7 +5473,7 @@ impl MultiBufferSnapshot {
             ExcerptRange<BufferOffset>,
             Range<BufferOffset>,
         ) -> Vec<(Range<BufferOffset>, T)>,
-    ) -> Option<Vec<(Option<Range<MultiBufferOffset>>, T)>> {
+    ) -> Option<Vec<(Range<MultiBufferOffset>, T)>> {
         let mut cursor = self.cursor::<MultiBufferOffset, BufferOffset>();
         cursor.seek(&position.start);
 
@@ -5540,14 +5537,7 @@ impl MultiBufferSnapshot {
                     let mut output_end = diff_transforms.start().output_dimension;
                     output_end += excerpt_offset_end - diff_transforms.start().excerpt_dimension;
 
-                    let output_len = output_end.0 - output_start.0;
-                    let excerpt_len = excerpt_offset_end - excerpt_offset_start;
-                    let output_range = if output_len != excerpt_len {
-                        None
-                    } else {
-                        Some(output_start.0..output_end.0)
-                    };
-                    (output_range, metadata)
+                    (output_start.0..output_end.0, metadata)
                 })
                 .collect(),
         )
@@ -5591,7 +5581,7 @@ impl MultiBufferSnapshot {
                 ]
             })?;
         let [(open, _), (close, _)] = results.try_into().ok()?;
-        Some((open?, close?))
+        Some((open, close))
     }
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
@@ -5625,7 +5615,7 @@ impl MultiBufferSnapshot {
                     })
                     .collect()
             })?;
-        Some(results.into_iter().filter_map(|(range, _)| range).tuples())
+        Some(results.into_iter().map(|(range, _)| range).tuples())
     }
 
     /// Returns enclosing bracket ranges containing the given range or returns None if the range is
@@ -5653,7 +5643,7 @@ impl MultiBufferSnapshot {
         })
         .into_iter()
         .flatten()
-        .filter_map(|(range, text_object)| Some((range?, text_object)))
+        .filter_map(|(range, text_object)| Some((range, text_object)))
     }
 
     pub fn bracket_ranges<T: ToOffset>(
@@ -5685,7 +5675,7 @@ impl MultiBufferSnapshot {
                     })
                     .collect()
             })?;
-        Some(results.into_iter().filter_map(|(range, _)| range).tuples())
+        Some(results.into_iter().map(|(range, _)| range).tuples())
     }
 
     pub fn redacted_ranges<'a, T: ToOffset>(
@@ -6240,7 +6230,7 @@ impl MultiBufferSnapshot {
                 }
             })?;
         let (output_range, node) = results.into_iter().next()?;
-        Some((node, output_range?))
+        Some((node, output_range))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
