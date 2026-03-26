@@ -681,11 +681,12 @@ impl Sidebar {
 
             // Pick a representative workspace for the group: prefer the active
             // workspace if it belongs to this group, otherwise use the first.
-            let Some(representative_workspace) = (if is_active {
+            let representative_workspace = if is_active {
                 active_workspace.as_ref()
             } else {
                 group.workspaces.first()
-            }) else {
+            };
+            let Some(representative_workspace) = representative_workspace else {
                 continue;
             };
 
