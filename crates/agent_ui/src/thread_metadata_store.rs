@@ -210,12 +210,14 @@ impl SidebarThreadMetadataStore {
         self.threads.is_empty()
     }
 
+    /// Returns all threads.
+    pub fn entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
+        self.threads.values().cloned()
+    }
+
     /// Returns all archived threads.
     pub fn archived_entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
-        self.threads
-            .values()
-            .filter(|thread| thread.archived)
-            .cloned()
+        self.entries().filter(|t| t.archived)
     }
 
     /// Returns all threads for the given path list, excluding archived threads.
@@ -229,10 +231,6 @@ impl SidebarThreadMetadataStore {
             .flatten()
             .filter(|s| !s.archived)
             .cloned()
-    }
-
-    fn is_thread_archived(&self, session_id: &acp::SessionId) -> Option<bool> {
-        self.threads.get(session_id).map(|t| t.archived)
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -279,15 +277,28 @@ impl SidebarThreadMetadataStore {
             .log_err();
     }
 
-    pub fn archive(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+    pub fn archive(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        self.update_archived(session_id, true, cx);
+    }
+
+    pub fn unarchive(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        self.update_archived(session_id, false, cx);
+    }
+
+    fn update_archived(
+        &mut self,
+        session_id: &acp::SessionId,
+        archived: bool,
+        cx: &mut Context<Self>,
+    ) {
         if !cx.has_flag::<AgentV2FeatureFlag>() {
             return;
         }
 
-        if let Some(thread) = self.threads.get(&session_id) {
+        if let Some(thread) = self.threads.get(session_id) {
             self.save(
                 ThreadMetadata {
-                    archived: true,
+                    archived,
                     ..thread.clone()
                 },
                 cx,
@@ -598,6 +609,7 @@ mod tests {
         folder_paths: PathList,
     ) -> ThreadMetadata {
         ThreadMetadata {
+            archived: false,
             session_id: acp::SessionId::new(session_id),
             agent_id: None,
             title: title.to_string().into(),
@@ -652,8 +664,8 @@ mod tests {
             let store = store.read(cx);
 
             let entry_ids = store
-                .entry_ids()
-                .map(|session_id| session_id.0.to_string())
+                .entries()
+                .map(|t| t.session_id.0.to_string())
                 .collect::<Vec<_>>();
             assert_eq!(entry_ids, vec!["session-1", "session-2"]);
 
@@ -747,8 +759,8 @@ mod tests {
             let store = store.read(cx);
 
             let entry_ids = store
-                .entry_ids()
-                .map(|session_id| session_id.0.to_string())
+                .entries()
+                .map(|t| t.session_id.0.to_string())
                 .collect::<Vec<_>>();
             assert_eq!(entry_ids, vec!["session-1", "session-2"]);
 
@@ -779,8 +791,8 @@ mod tests {
             let store = store.read(cx);
 
             let entry_ids = store
-                .entry_ids()
-                .map(|session_id| session_id.0.to_string())
+                .entries()
+                .map(|t| t.session_id.0.to_string())
                 .collect::<Vec<_>>();
             assert_eq!(entry_ids, vec!["session-1"]);
 
@@ -961,6 +973,7 @@ mod tests {
             updated_at: Utc::now(),
             created_at: Some(Utc::now()),
             folder_paths: PathList::default(),
+            archived: false,
         };
 
         cx.update(|cx| {

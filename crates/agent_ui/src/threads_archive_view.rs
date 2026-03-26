@@ -1,19 +1,13 @@
-use std::sync::Arc;
-
-use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata};
-use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
-use fs::Fs;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListState, Render,
     SharedString, Subscription, Task, Window, list, prelude::*, px,
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use project::AgentServerStore;
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
@@ -109,14 +103,7 @@ pub struct ThreadsArchiveView {
 }
 
 impl ThreadsArchiveView {
-    pub fn new(
-        agent_connection_store: Entity<AgentConnectionStore>,
-        agent_server_store: Entity<AgentServerStore>,
-        thread_store: Entity<ThreadStore>,
-        fs: Arc<dyn Fs>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let filter_editor = cx.new(|cx| {
@@ -193,6 +180,8 @@ impl ThreadsArchiveView {
         let sessions = SidebarThreadMetadataStore::global(cx)
             .read(cx)
             .archived_entries()
+            .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
+            .rev()
             .collect::<Vec<_>>();
         let query = self.filter_editor.read(cx).text(cx).to_lowercase();
         let today = Local::now().naive_local().date();

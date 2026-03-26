@@ -2,7 +2,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
-use agent_ui::thread_metadata_store::{SidebarThreadMetadataStore, ThreadMetadata};
+use agent_ui::thread_metadata_store::SidebarThreadMetadataStore;
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
@@ -2144,33 +2144,14 @@ impl Sidebar {
 
     fn activate_archived_thread(
         &mut self,
-        metadata: ThreadMetadata,
+        agent: Agent,
+        session_info: acp_thread::AgentSessionInfo,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Eagerly save thread metadata so that the sidebar is updated immediately
         SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save(
-                ThreadMetadata {
-                    archived: true,
-                    ..metadata.clone()
-                },
-                cx,
-            )
+            store.unarchive(&session_info.session_id, cx)
         });
-
-        let agent = match metadata.agent_id {
-            Some(id) => Agent::Custom { id },
-            None => Agent::NativeAgent,
-        };
-        let session_info = acp_thread::AgentSessionInfo {
-            session_id: metadata.session_id,
-            work_dirs: Some(metadata.folder_paths),
-            title: Some(metadata.title),
-            updated_at: Some(metadata.updated_at),
-            created_at: metadata.created_at,
-            meta: None,
-        };
 
         if let Some(path_list) = &session_info.work_dirs {
             if let Some(workspace) = self.find_current_workspace_for_path_list(path_list, cx) {
@@ -2446,7 +2427,7 @@ impl Sidebar {
         }
 
         SidebarThreadMetadataStore::global(cx)
-            .update(cx, |store, cx| store.archive(session_id.clone(), cx));
+            .update(cx, |store, cx| store.archive(session_id, cx));
     }
 
     fn remove_selected_thread(
@@ -3044,39 +3025,7 @@ impl Sidebar {
     }
 
     fn show_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_workspace) = self.multi_workspace.upgrade().and_then(|w| {
-            w.read(cx)
-                .workspaces()
-                .get(w.read(cx).active_workspace_index())
-                .cloned()
-        }) else {
-            return;
-        };
-
-        let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
-            return;
-        };
-
-        let thread_store = agent_panel.read(cx).thread_store().clone();
-        let fs = active_workspace.read(cx).project().read(cx).fs().clone();
-        let agent_connection_store = agent_panel.read(cx).connection_store().clone();
-        let agent_server_store = active_workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .agent_server_store()
-            .clone();
-
-        let archive_view = cx.new(|cx| {
-            ThreadsArchiveView::new(
-                agent_connection_store,
-                agent_server_store,
-                thread_store,
-                fs,
-                window,
-                cx,
-            )
-        });
+        let archive_view = cx.new(|cx| ThreadsArchiveView::new(window, cx));
         let subscription = cx.subscribe_in(
             &archive_view,
             window,
@@ -3086,7 +3035,21 @@ impl Sidebar {
                 }
                 ThreadsArchiveViewEvent::Unarchive { thread } => {
                     this.show_thread_list(window, cx);
-                    this.activate_archived_thread(thread.clone(), window, cx);
+
+                    let agent = match thread.agent_id.clone() {
+                        Some(id) => Agent::Custom { id },
+                        None => Agent::NativeAgent,
+                    };
+                    let session_info = acp_thread::AgentSessionInfo {
+                        session_id: thread.session_id.clone(),
+                        work_dirs: Some(thread.folder_paths.clone()),
+                        title: Some(thread.title.clone()),
+                        updated_at: Some(thread.updated_at),
+                        created_at: thread.created_at,
+                        meta: None,
+                    };
+
+                    this.activate_archived_thread(agent, session_info, window, cx);
                 }
             },
         );
@@ -3294,7 +3257,10 @@ mod tests {
     use super::*;
     use acp_thread::StubAgentConnection;
     use agent::ThreadStore;
-    use agent_ui::test_support::{active_session_id, open_thread_with_connection, send_message};
+    use agent_ui::{
+        test_support::{active_session_id, open_thread_with_connection, send_message},
+        thread_metadata_store::ThreadMetadata,
+    };
     use assistant_text_thread::TextThreadStore;
     use chrono::DateTime;
     use feature_flags::FeatureFlagAppExt as _;
