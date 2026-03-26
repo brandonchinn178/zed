@@ -1,6 +1,5 @@
 use std::{path::Path, sync::Arc};
 
-use acp_thread::AgentSessionInfo;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
 use anyhow::Context as _;
@@ -78,6 +77,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
                         folder_paths: entry.folder_paths,
+                        archived: true,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -113,31 +113,15 @@ pub struct ThreadMetadata {
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
     pub folder_paths: PathList,
+    pub archived: bool,
 }
 
 impl ThreadMetadata {
-    pub fn from_session_info(agent_id: AgentId, session: &AgentSessionInfo) -> Self {
-        let session_id = session.session_id.clone();
-        let title = session.title.clone().unwrap_or_default();
-        let updated_at = session.updated_at.unwrap_or_else(|| Utc::now());
-        let created_at = session.created_at.unwrap_or(updated_at);
-        let folder_paths = session.work_dirs.clone().unwrap_or_default();
-        let agent_id = if agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
-            None
-        } else {
-            Some(agent_id)
-        };
-        Self {
-            session_id,
-            agent_id,
-            title,
-            updated_at,
-            created_at: Some(created_at),
-            folder_paths,
-        }
-    }
-
-    pub fn from_thread(thread: &Entity<acp_thread::AcpThread>, cx: &App) -> Self {
+    pub fn from_thread(
+        is_archived: bool,
+        thread: &Entity<acp_thread::AcpThread>,
+        cx: &App,
+    ) -> Self {
         let thread_ref = thread.read(cx);
         let session_id = thread_ref.session_id().clone();
         let title = thread_ref
@@ -169,6 +153,7 @@ impl ThreadMetadata {
             created_at: Some(updated_at), // handled by db `ON CONFLICT`
             updated_at,
             folder_paths,
+            archived: is_archived,
         }
     }
 }
@@ -179,7 +164,7 @@ impl ThreadMetadata {
 /// Automatically listens to AcpThread events and updates metadata if it has changed.
 pub struct SidebarThreadMetadataStore {
     db: ThreadMetadataDb,
-    threads: Vec<ThreadMetadata>,
+    threads: HashMap<acp::SessionId, ThreadMetadata>,
     threads_by_paths: HashMap<PathList, Vec<ThreadMetadata>>,
     reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
@@ -237,14 +222,15 @@ impl SidebarThreadMetadataStore {
         self.threads.is_empty()
     }
 
-    pub fn entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
-        self.threads.iter().cloned()
+    /// Returns all archived threads.
+    pub fn archived_entries(&self) -> impl Iterator<Item = ThreadMetadata> + '_ {
+        self.threads
+            .values()
+            .filter(|thread| thread.archived)
+            .cloned()
     }
 
-    pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
-        self.threads.iter().map(|thread| thread.session_id.clone())
-    }
-
+    /// Returns all threads for the given path list, excluding archived threads.
     pub fn entries_for_path(
         &self,
         path_list: &PathList,
@@ -253,7 +239,12 @@ impl SidebarThreadMetadataStore {
             .get(path_list)
             .into_iter()
             .flatten()
+            .filter(|s| !s.archived)
             .cloned()
+    }
+
+    fn is_thread_archived(&self, session_id: &acp::SessionId) -> Option<bool> {
+        self.threads.get(session_id).map(|t| t.archived)
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -278,7 +269,7 @@ impl SidebarThreadMetadataStore {
                             .entry(row.folder_paths.clone())
                             .or_default()
                             .push(row.clone());
-                        this.threads.push(row);
+                        this.threads.insert(row.session_id.clone(), row);
                     }
 
                     cx.notify();
@@ -298,6 +289,23 @@ impl SidebarThreadMetadataStore {
         self.pending_thread_ops_tx
             .try_send(DbOperation::Insert(metadata))
             .log_err();
+    }
+
+    pub fn archive(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return;
+        }
+
+        if let Some(thread) = self.threads.get(&session_id) {
+            self.save(
+                ThreadMetadata {
+                    archived: true,
+                    ..thread.clone()
+                },
+                cx,
+            );
+            cx.notify();
+        }
     }
 
     pub fn delete(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
@@ -371,7 +379,7 @@ impl SidebarThreadMetadataStore {
 
         let mut this = Self {
             db,
-            threads: Vec::new(),
+            threads: HashMap::default(),
             threads_by_paths: HashMap::default(),
             reload_task: None,
             session_subscriptions: HashMap::default(),
@@ -416,7 +424,8 @@ impl SidebarThreadMetadataStore {
             | acp_thread::AcpThreadEvent::Error
             | acp_thread::AcpThreadEvent::LoadError(_)
             | acp_thread::AcpThreadEvent::Refusal => {
-                let metadata = ThreadMetadata::from_thread(&thread, cx);
+                //fixme: Check if this we want this to be un-archived always
+                let metadata = ThreadMetadata::from_thread(false, &thread, cx);
                 self.save(metadata, cx);
             }
             _ => {}
@@ -431,17 +440,20 @@ struct ThreadMetadataDb(ThreadSafeConnection);
 impl Domain for ThreadMetadataDb {
     const NAME: &str = stringify!(ThreadMetadataDb);
 
-    const MIGRATIONS: &[&str] = &[sql!(
-        CREATE TABLE IF NOT EXISTS sidebar_threads(
-            session_id TEXT PRIMARY KEY,
-            agent_id TEXT,
-            title TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            created_at TEXT,
-            folder_paths TEXT,
-            folder_paths_order TEXT
-        ) STRICT;
-    )];
+    const MIGRATIONS: &[&str] = &[
+        sql!(
+            CREATE TABLE IF NOT EXISTS sidebar_threads(
+                session_id TEXT PRIMARY KEY,
+                agent_id TEXT,
+                title TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_at TEXT,
+                folder_paths TEXT,
+                folder_paths_order TEXT
+            ) STRICT;
+        ),
+        sql!(ALTER TABLE sidebar_threads ADD COLUMN archived INTEGER DEFAULT 0),
+    ];
 }
 
 db::static_connection!(ThreadMetadataDb, []);
@@ -455,7 +467,7 @@ impl ThreadMetadataDb {
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
-            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order \
+            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived \
              FROM sidebar_threads \
              ORDER BY updated_at DESC"
         )?()
@@ -474,16 +486,18 @@ impl ThreadMetadataDb {
         } else {
             (Some(serialized.paths), Some(serialized.order))
         };
+        let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
                        ON CONFLICT(session_id) DO UPDATE SET \
                            agent_id = excluded.agent_id, \
                            title = excluded.title, \
                            updated_at = excluded.updated_at, \
                            folder_paths = excluded.folder_paths, \
-                           folder_paths_order = excluded.folder_paths_order";
+                           folder_paths_order = excluded.folder_paths_order, \
+                           archived = excluded.archived";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&id, 1)?;
             i = stmt.bind(&agent_id, i)?;
@@ -491,7 +505,8 @@ impl ThreadMetadataDb {
             i = stmt.bind(&updated_at, i)?;
             i = stmt.bind(&created_at, i)?;
             i = stmt.bind(&folder_paths, i)?;
-            stmt.bind(&folder_paths_order, i)?;
+            i = stmt.bind(&folder_paths_order, i)?;
+            stmt.bind(&archived, i)?;
             stmt.exec()
         })
         .await
@@ -520,6 +535,7 @@ impl Column for ThreadMetadata {
         let (folder_paths_str, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (folder_paths_order_str, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (archived, next): (bool, i32) = Column::column(statement, next)?;
 
         let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)?.with_timezone(&Utc);
         let created_at = created_at_str
@@ -545,6 +561,7 @@ impl Column for ThreadMetadata {
                 updated_at,
                 created_at,
                 folder_paths,
+                archived,
             },
             next,
         ))

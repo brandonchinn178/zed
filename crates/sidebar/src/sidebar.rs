@@ -2144,18 +2144,33 @@ impl Sidebar {
 
     fn activate_archived_thread(
         &mut self,
-        agent: Agent,
-        session_info: acp_thread::AgentSessionInfo,
+        metadata: ThreadMetadata,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Eagerly save thread metadata so that the sidebar is updated immediately
         SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.save(
-                ThreadMetadata::from_session_info(agent.id(), &session_info),
+                ThreadMetadata {
+                    archived: true,
+                    ..metadata.clone()
+                },
                 cx,
             )
         });
+
+        let agent = match metadata.agent_id {
+            Some(id) => Agent::Custom { id },
+            None => Agent::NativeAgent,
+        };
+        let session_info = acp_thread::AgentSessionInfo {
+            session_id: metadata.session_id,
+            work_dirs: Some(metadata.folder_paths),
+            title: Some(metadata.title),
+            updated_at: Some(metadata.updated_at),
+            created_at: metadata.created_at,
+            meta: None,
+        };
 
         if let Some(path_list) = &session_info.work_dirs {
             if let Some(workspace) = self.find_current_workspace_for_path_list(path_list, cx) {
@@ -3069,12 +3084,9 @@ impl Sidebar {
                 ThreadsArchiveViewEvent::Close => {
                     this.show_thread_list(window, cx);
                 }
-                ThreadsArchiveViewEvent::Unarchive {
-                    agent,
-                    session_info,
-                } => {
+                ThreadsArchiveViewEvent::Unarchive { thread } => {
                     this.show_thread_list(window, cx);
-                    this.activate_archived_thread(agent.clone(), session_info.clone(), window, cx);
+                    this.activate_archived_thread(thread.clone(), window, cx);
                 }
             },
         );
@@ -3403,6 +3415,7 @@ mod tests {
             updated_at,
             created_at: None,
             folder_paths: path_list,
+            archived: false,
         };
         cx.update(|cx| {
             SidebarThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
