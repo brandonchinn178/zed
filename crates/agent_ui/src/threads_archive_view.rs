@@ -576,7 +576,7 @@ impl ThreadsArchiveView {
                                                 .gap_0p5()
                                                 .when(can_unarchive, |this| {
                                                     this.child(
-                                                        Button::new("unarchive-thread", "Restore")
+                                                        Button::new("unarchive-thread", "Open")
                                                             .style(ButtonStyle::Filled)
                                                             .label_size(LabelSize::Small)
                                                             .when(is_focused, |this| {
