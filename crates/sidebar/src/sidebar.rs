@@ -765,36 +765,23 @@ impl Sidebar {
                 // Load threads from linked git worktrees that don't have an
                 // open workspace in this group. Only include worktrees that
                 // belong to this group (not shared with another group).
-                let linked_worktree_queries: Vec<_> = group
+                let linked_worktree_path_lists = group
                     .workspaces
                     .iter()
                     .flat_map(|ws| root_repository_snapshots(ws, cx))
                     .filter(|snapshot| !snapshot.is_linked_worktree())
                     .flat_map(|snapshot| {
-                        let main_worktree_path = snapshot.original_repo_abs_path.clone();
                         snapshot
                             .linked_worktrees()
                             .iter()
                             .filter(|wt| {
                                 project_groups.group_owns_worktree(group, &path_list, &wt.path)
                             })
-                            .map(move |wt| {
-                                let worktree_name =
-                                    linked_worktree_short_name(&main_worktree_path, &wt.path)
-                                        .unwrap_or_default();
-                                let worktree_path_list =
-                                    PathList::new(std::slice::from_ref(&wt.path));
-                                let worktree_full_path: SharedString =
-                                    wt.path.display().to_string().into();
-                                (worktree_path_list, worktree_name, worktree_full_path)
-                            })
+                            .map(|wt| PathList::new(std::slice::from_ref(&wt.path)))
                             .collect::<Vec<_>>()
-                    })
-                    .collect();
+                    });
 
-                for (worktree_path_list, worktree_name, worktree_full_path) in
-                    linked_worktree_queries
-                {
+                for worktree_path_list in linked_worktree_path_lists {
                     let worktree_rows: Vec<_> = thread_store
                         .read(cx)
                         .entries_for_path(&worktree_path_list)
@@ -803,6 +790,17 @@ impl Sidebar {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
+                        let worktree_info = row.folder_paths.paths().first().and_then(|path| {
+                            let canonical = project_groups.canonicalize_path(path);
+                            if canonical != path.as_path() {
+                                let name =
+                                    linked_worktree_short_name(canonical, path).unwrap_or_default();
+                                let full_path: SharedString = path.display().to_string().into();
+                                Some((name, full_path))
+                            } else {
+                                None
+                            }
+                        });
                         let (agent, icon, icon_from_external_svg) = resolve_agent(&row);
                         threads.push(ThreadEntry {
                             agent,
@@ -817,13 +815,13 @@ impl Sidebar {
                             icon,
                             icon_from_external_svg,
                             status: AgentThreadStatus::default(),
-                            workspace: ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
+                            workspace: ThreadEntryWorkspace::Closed(row.folder_paths.clone()),
                             is_live: false,
                             is_background: false,
                             is_title_generating: false,
                             highlight_positions: Vec::new(),
-                            worktree_name: Some(worktree_name.clone()),
-                            worktree_full_path: Some(worktree_full_path.clone()),
+                            worktree_name: worktree_info.as_ref().map(|(name, _)| name.clone()),
+                            worktree_full_path: worktree_info.map(|(_, path)| path),
                             worktree_highlight_positions: Vec::new(),
                             diff_stats: DiffStats::default(),
                         });
